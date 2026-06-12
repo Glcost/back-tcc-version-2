@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roar API - Testes do Aluno e Atividades</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans p-6">
+
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-8 border-b pb-4 border-gray-200">
+            <h1 class="text-3xl font-bold text-orange-600">🦁 Roar Student & Gameplay Sandbox</h1>
+            <p class="text-sm text-gray-600 mt-1">Validação do ecossistema de jogos, autenticação por PIN e ingestão de métricas de desempenho.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            <div class="space-y-6">
+                
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <h2 class="text-lg font-semibold text-gray-700 mb-3">1. Login do Aluno <span class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-mono">POST /api/aluno/login</span></h2>
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <input id="aluno_email" type="email" placeholder="E-mail do Aluno" class="border p-2 rounded text-sm w-full">
+                        <input id="aluno_pin" type="text" placeholder="PIN (Ex: 1234)" class="border p-2 rounded text-sm w-full">
+                    </div>
+                    <button onclick="loginAluno()" class="w-full bg-orange-600 hover:bg-orange-700 text-white py-2 rounded text-sm font-medium transition-colors">Autenticar Aluno</button>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <h2 class="text-lg font-semibold text-gray-700 mb-3">2. Estrutura de Módulos Ativos <span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-mono">GET /api/modulos</span></h2>
+                    <p class="text-xs text-gray-500 mb-3">Retorna todos os grupos de atividades configurados com flag ativa no Supabase.</p>
+                    <button onclick="listarModulos()" class="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded text-sm font-medium transition-colors">Buscar Módulos da Matriz</button>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <h2 class="text-lg font-semibold text-gray-700 mb-3">3. Motor de Customização de Fase <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">GET /api/fase/&lt;mod_id&gt;/aluno/&lt;al_id&gt;</span></h2>
+                    <p class="text-xs text-gray-500 mb-3">Busca as instruções lexicais filtradas de acordo com o <b>modo_aprendizagem</b> do aluno.</p>
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <input id="fase_modulo_id" type="number" placeholder="ID do Módulo" class="border p-2 rounded text-sm w-full">
+                        <input id="fase_aluno_id" type="number" placeholder="ID do Aluno" class="border p-2 rounded text-sm w-full">
+                    </div>
+                    <button onclick="carregarFase()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded text-sm font-medium transition-colors">Processar e Filtrar Fase</button>
+                </div>
+
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <h2 class="text-lg font-semibold text-gray-700 mb-3">4. Salvar Telemetria da Partida <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-mono">POST /api/desempenho</span></h2>
+                    <div class="space-y-3">
+                        <div class="grid grid-cols-3 gap-2">
+                            <input id="des_aluno_id_post" type="number" placeholder="ID Aluno" class="border p-2 rounded text-sm">
+                            <input id="des_atividade_id" type="number" placeholder="ID Atividade" class="border p-2 rounded text-sm">
+                            <input id="des_modo" type="text" placeholder="Modo Utilizado" class="border p-2 rounded text-sm">
+                        </div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <input id="des_erros" type="number" placeholder="Erros" value="0" class="border p-2 rounded text-sm">
+                            <input id="des_tempo" type="number" placeholder="Tempo (s)" value="45" class="border p-2 rounded text-sm">
+                            <div class="flex items-center justify-center border rounded bg-gray-50">
+                                <label class="inline-flex items-center cursor-pointer text-xs font-medium text-gray-600">
+                                    <input id="des_concluido" type="checkbox" checked class="mr-1 rounded"> Concluído
+                                </label>
+                            </div>
+                        </div>
+                        <button onclick="salvarDesempenho()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded text-sm font-medium transition-colors">Registrar Desempenho</button>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="sticky top-6">
+                <div class="bg-slate-900 rounded-xl shadow-md p-5 text-white h-[calc(100vh-120px)] flex flex-col">
+                    <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4">
+                        <span class="text-sm font-bold tracking-wider uppercase text-slate-400">Retorno da Requisição (JSON)</span>
+                        <div class="flex gap-2">
+                            <span id="status_indicator" class="text-xs px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-400">Status: -</span>
+                            <button onclick="limparConsole()" class="text-xs text-slate-400 hover:text-white transition-colors">Limpar</button>
+                        </div>
+                    </div>
+                    <pre id="json_output" class="text-orange-400 font-mono text-xs overflow-auto flex-1 whitespace-pre-wrap bg-slate-950 p-4 rounded-lg border border-slate-800">[Aguardando execução de comandos do ecossistema do aluno...]</pre>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const outputElement = document.getElementById('json_output');
+        const statusElement = document.getElementById('status_indicator');
+
+        function atualizarConsole(status, data) {
+            statusElement.className = `text-xs px-2 py-0.5 rounded font-mono ${status >= 200 && status < 300 ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`;
+            statusElement.innerText = `Status: ${status}`;
+            outputElement.innerText = JSON.stringify(data, null, 2);
+        }
+
+        function limparConsole() {
+            statusElement.className = 'text-xs px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-400';
+            statusElement.innerText = 'Status: -';
+            outputElement.innerText = '[Aguardando execução de comandos do ecossistema do aluno...]';
+        }
+
+        async function loginAluno() {
+            try {
+                const res = await fetch('/api/aluno/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: document.getElementById('aluno_email').value,
+                        pin_acesso: document.getElementById('aluno_pin').value
+                    })
+                });
+                const data = await res.json();
+                atualizarConsole(res.status, data);
+            } catch (err) { atualizarConsole(500, { erro: err.message }); }
+        }
+
+        async function listarModulos() {
+            try {
+                const res = await fetch('/api/modulos');
+                const data = await res.json();
+                atualizarConsole(res.status, data);
+            } catch (err) { atualizarConsole(500, { erro: err.message }); }
+        }
+
+        async function carregarFase() {
+            const modId = document.getElementById('fase_modulo_id').value;
+            const alId = document.getElementById('fase_aluno_id').value;
+            if (!modId || !alId) return alert('Insira os IDs do módulo e do aluno.');
+            try {
+                const res = await fetch(`/api/fase/${modId}/aluno/${alId}`);
+                const data = await res.json();
+                atualizarConsole(res.status, data);
+            } catch (err) { atualizarConsole(500, { erro: err.message }); }
+        }
+
+        async function salvarDesempenho() {
+            try {
+                const res = await fetch('/api/desempenho', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        aluno_id: parseInt(document.getElementById('des_aluno_id_post').value),
+                        atividade_id: parseInt(document.getElementById('des_atividade_id').value),
+                        modo_utilizado: document.getElementById('des_modo').value,
+                        quantidade_erros: parseInt(document.getElementById('des_erros').value),
+                        tempo_segundos: parseInt(document.getElementById('des_tempo').value),
+                        concluido: document.getElementById('des_concluido').checked
+                    })
+                });
+                const data = await res.json();
+                atualizarConsole(res.status, data);
+            } catch (err) { atualizarConsole(500, { erro: err.message }); }
+        }
+    </script>
+</body>
+</html>

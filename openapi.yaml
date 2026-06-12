@@ -1,0 +1,232 @@
+openapi: 3.0.0
+info:
+  title: Roar API
+  description: API de integração para a plataforma de EdTech Roar (TCC) - Gestão de módulos, jogos customizados e telemetria de desempenho.
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000
+    description: Servidor de Desenvolvimento Local
+  - url: https://roar-backend.vercel.app
+    description: Servidor de Produção (Vercel)
+
+tags:
+  - name: Alunos
+    description: Endpoints relacionados ao fluxo do estudante e telemetria
+  - name: Professores
+    description: Gerenciamento de alunos, turmas e relatórios de progresso
+  - name: Atividades
+    description: Motor do jogo e listagem de conteúdos pedagógicos
+
+paths:
+  # --- TAG: ALUNOS ---
+  /api/aluno/login:
+    post:
+      tags:
+        - Alunos
+      summary: Realiza o login do aluno via PIN e e-mail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - pin_acesso
+                - email
+              properties:
+                pin_acesso:
+                  type: string
+                  example: "1234"
+                email:
+                  type: string
+                  example: "leandro@escola.com"
+      responses:
+        '200':
+          description: Login efetuado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mensagem:
+                    type: string
+                    example: "Login aceito!"
+                  aluno:
+                    type: object
+        '400':
+          description: Campos obrigatórios ausentes
+        '401':
+          description: Credenciais inválidas
+        '500':
+          description: Erro interno no processamento
+
+  /api/aluno/perfil/{aluno_id}:
+    get:
+      tags:
+        - Alunos
+      summary: Obtém metadados de UI/UX customizados do perfil do aluno
+      parameters:
+        - name: aluno_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Dados de perfil recuperados com sucesso
+        '404':
+          description: Aluno não encontrado
+        '500':
+          description: Erro interno
+
+  /api/desempenho:
+    post:
+      tags:
+        - Alunos
+      summary: Registra a telemetria e métricas de uma atividade realizada pelo aluno
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - aluno_id
+                - atividade_id
+                - modo_utilizado
+                - quantidade_erros
+                - tempo_segundos
+                - concluido
+              properties:
+                aluno_id:
+                  type: integer
+                  example: 1
+                atividade_id:
+                  type: integer
+                  example: 42
+                modo_utilizado:
+                  type: string
+                  example: "Visual Guiado"
+                quantidade_erros:
+                  type: integer
+                  example: 2
+                tempo_segundos:
+                  type: integer
+                  example: 120
+                concluido:
+                  type: boolean
+                  example: true
+      responses:
+        '201':
+          description: Telemetria salva com sucesso
+        '400':
+          description: Payload corrompido, vazio ou com tipos incorretos
+        '500':
+          description: Falha operacional no banco de dados
+
+  # --- TAG: ATIVIDADES ---
+  /api/modulos:
+    get:
+      tags:
+        - Atividades
+      summary: Lista todos os módulos pedagógicos ativos do sistema
+      responses:
+        '200':
+          description: Lista de módulos carregada com sucesso
+        '500':
+          description: Erro interno
+
+  /api/fase/{modulo_id}/aluno/{aluno_id}:
+    get:
+      tags:
+        - Atividades
+      summary: Carrega as fases adaptativas do jogo com base no perfil e personalização do aluno
+      parameters:
+        - name: modulo_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 2
+        - name: aluno_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Fases e mídias montadas com sucesso para o motor do jogo
+        '404':
+          description: Aluno não cadastrado ou módulo sem atividades associadas
+        '500':
+          description: Erro na montagem da fase
+
+  # --- TAG: PROFESSORES ---
+  /api/login:
+    post:
+      tags:
+        - Professors
+      summary: Realiza o login administrativo do professor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - senha
+              properties:
+                email:
+                  type: string
+                  example: "ana.paula@escola.com"
+                senha:
+                  type: string
+                  example: "senhaSegura123"
+      responses:
+        '200':
+          description: Autenticação administrativa concedida
+        '400':
+          description: E-mail ou senha ausentes
+        '401':
+          description: Credenciais incorretas
+        '500':
+          description: Erro interno
+
+  /api/desempenho/aluno/{aluno_id}:
+    get:
+      tags:
+        - Professors
+      summary: Coleta o histórico completo de desempenho de um aluno para o dashboard
+      parameters:
+        - name: aluno_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Histórico cronológico decrescente retornado com sucesso
+        '500':
+          description: Erro interno no servidor
+
+  /api/alunos/{id}:
+    delete:
+      tags:
+        - Professors
+      summary: Remove o registro de um aluno do sistema
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 5
+      responses:
+        '200':
+          description: Aluno desvinculado com sucesso
+        '500':
+          description: Erro interno
