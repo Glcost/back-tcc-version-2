@@ -1,7 +1,39 @@
 from flask import Blueprint, request, jsonify
+from werkzeug.security import generate_password_hash , check_password_hash
 from src.bd_config import supabase
 
 professores_bp = Blueprint('professores', __name__)
+
+
+
+@professores_bp.route('/api/cadastro', methods=['POST'])
+def cadastro_professor():
+    try:
+        dados = request.get_json()
+        
+        
+        if not dados or 'nome' not in dados or'email' not in dados or 'senha' not in dados:
+            return jsonify({'erro': 'Precisa preencher todos os campos'})
+        
+        busca = supabase.table('professores').select('*').eq('email', dados.get('email').strip().lower()).execute()
+        
+        if len(busca.data) > 0:
+            return jsonify({'erro': 'E-mail já cadastrado. Por favor, use outro e-mail ou faça login.'}), 409
+        
+        senha_hashed = generate_password_hash(dados.get('senha').strip())
+        
+        req = supabase.table('professores').insert({
+            'nome': dados.get('nome').strip(),
+            'email': dados.get('email').strip().lower(),
+            'senha': senha_hashed
+        }).execute()
+        
+        
+    except Exception as e:
+        return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
+
+        
+
 
 @professores_bp.route('/api/login', methods=['POST'])
 def login_professor():
@@ -24,7 +56,7 @@ def login_professor():
     
 
         # 3. ANÁLISE DOS DADOS
-        if len(busca.data) == 0:
+        if len(busca.data) == 0 or not check_password_hash(busca.data[0]['senha'], senha_digitada):
             return jsonify({"erro": "E-mail ou senha incorretos."}), 401 
 
         professor_logado = busca.data[0]
@@ -48,12 +80,8 @@ def login_professor():
 @professores_bp.route('/api/aluno/professor/<int:professor_id>', methods=['GET'])
 def lista_alunos(professor_id):
     try:
-     
-       busca = supabase.table('alunos').select("*").eq('professor_id', professor_id).execute()
-       return jsonify(busca.data),200
-    
-
-
+        busca = supabase.table('alunos').select("*").eq('professor_id', professor_id).execute()
+        return jsonify(busca.data), 200
 
     except Exception as e:
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
