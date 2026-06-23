@@ -1,6 +1,6 @@
-flask==3.0.2
-flask-cors==4.0.0
-supabase==2.4.0
-python-dotenv==1.0.1
-postgrest==0.16.2
-httpx==0.27.0
+Flask
+flask-cors
+python-dotenv
+supabase
+Werkzeug
+gunicorn
