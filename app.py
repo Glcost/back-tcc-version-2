@@ -1,11 +1,19 @@
 import os
 from flask import Flask, jsonify
 from flask_cors import CORS
+from flasgger import Swagger
 from src.aluno import alunos_bp
 from src.professora import professores_bp
 from src.atividades import atividades_bp
 
 app = Flask(__name__)
+
+#VERSÃO do OPEN API
+app.config['SWAGGER'] = {
+    'openapi':'3.0.0'
+}
+
+swagger = Swagger(app, template_file='openapi.yaml')
 
 # Configuração estrita de CORS para o seu Front-end React
 CORS(app, resources={r"/api/*": {"origins": "*"}})
