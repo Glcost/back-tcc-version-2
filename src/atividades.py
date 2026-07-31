@@ -3,7 +3,7 @@ from src.bd_config import supabase
 
 atividades_bp = Blueprint('atividades', __name__)
 
-@atividades_bp.route('/api/modulos', methods=['GET'])
+@atividades_bp.route('/modulos', methods=['GET'])
 def listar_modulos():
     try:
         busca = supabase.table('modulos').select('*').eq('ativo', True).execute()
@@ -11,7 +11,7 @@ def listar_modulos():
     except Exception as e:
         return jsonify({"erro": f"Erro interno: {str(e)}"}), 500
 
-@atividades_bp.route('/api/fase/<int:modulo_id>/aluno/<int:aluno_id>', methods=['GET'])
+@atividades_bp.route('/fase/<int:modulo_id>/aluno/<int:aluno_id>', methods=['GET'])
 def carregar_fase_jogo(modulo_id, aluno_id):
     try:
         # Busca o modo de aprendizagem específico do aluno

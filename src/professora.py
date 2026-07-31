@@ -1,83 +1,102 @@
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash , check_password_hash
+from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase
 
 professores_bp = Blueprint('professores', __name__)
 
 
 
-@professores_bp.route('/api/cadastro', methods=['POST'])
+@professores_bp.route('/cadastro', methods=['POST'])
 def cadastro_professor():
-    try:
-        dados = request.get_json()
+ try:
+        dados = request.get_json(silent=True) or {}
         
+        # 1. Validação de campos obrigatórios (Retorna HTTP 400)
+        if not dados or 'nome' not in dados or 'email' not in dados or 'senha' not in dados:
+            return jsonify({'erro': 'Precisa preencher todos os campos: nome, email e senha.'}), 400
         
-        if not dados or 'nome' not in dados or'email' not in dados or 'senha' not in dados:
-            return jsonify({'erro': 'Precisa preencher todos os campos'})
-        
-        busca = supabase.table('professores').select('*').eq('email', dados.get('email').strip().lower()).execute()
+        email = str(dados.get('email')).strip().lower()
+        nome = str(dados.get('nome')).strip()
+        senha = str(dados.get('senha')).strip()
+
+        if not email or not nome or not senha:
+            return jsonify({'erro': 'Os campos não podem estar em branco.'}), 400
+
+        # 2. Verificação de e-mail duplicado no Supabase
+        busca = supabase.table('professores').select('*').eq('email', email).execute()
         
         if len(busca.data) > 0:
             return jsonify({'erro': 'E-mail já cadastrado. Por favor, use outro e-mail ou faça login.'}), 409
         
-        senha_hashed = generate_password_hash(dados.get('senha').strip())
+        # 3. Hashing da senha e inserção
+        senha_hashed = generate_password_hash(senha)
         
         req = supabase.table('professores').insert({
-            'nome': dados.get('nome').strip(),
-            'email': dados.get('email').strip().lower(),
+            'nome': nome,
+            'email': email,
             'senha': senha_hashed
         }).execute()
+
+        if not req.data:
+            return jsonify({'erro': 'Falha ao registrar professor no banco de dados.'}), 500
         
-        
-    except Exception as e:
-        return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
-
-        
-
-
-@professores_bp.route('/api/login', methods=['POST'])
-def login_professor():
-    try:
-        dados = request.get_json()
-        
-        # 1. VALIDAÇÃO DE ENTRADA
-        if not dados or 'email' not in dados or 'senha' not in dados:
-            return jsonify({"erro": "Os campos 'email' e 'senha' são obrigatórios."}), 400
-            
-        email_digitado = dados.get('email').strip().lower()
-        senha_digitada = dados.get('senha').strip()
-
-        # 2. SELEÇÃO SEGURA NO SUPABASE (Filtro duplo: E-mail E Senha)
-        busca = supabase.table('professores') \
-            .select('*') \
-            .eq('email', email_digitado) \
-            .eq('senha', senha_digitada) \
-            .execute()
-    
-
-        # 3. ANÁLISE DOS DADOS
-        if len(busca.data) == 0 or not check_password_hash(busca.data[0]['senha'], senha_digitada):
-            return jsonify({"erro": "E-mail ou senha incorretos."}), 401 
-
-        professor_logado = busca.data[0]
-
-        # 4. RESPOSTA PARA O FRONT-END
+        # 4. Retorno explícito de sucesso (HTTP 201)
         return jsonify({
-            "mensagem": f"Bem-vinda de volta, {professor_logado['nome']}!",
-            "professor": {
-                "id": professor_logado['id'],
-                "nome": professor_logado['nome'],
-                "email": professor_logado['email']
+            'mensagem': 'Professor cadastrado com sucesso!',
+            'professor': {
+                'id': req.data[0]['id'],
+                'nome': req.data[0]['nome'],
+                'email': req.data[0]['email']
             }
-        }), 200
-
-    except Exception as e:
+        }), 201
+        
+ except Exception as e:
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
+        
 
 
+@professores_bp.route('/login', methods=['POST'])
+def login_professor():
+    dados = request.get_json() or {}
+    email = dados.get('email')
+    senha = dados.get('senha')
+
+    # Validação rápida de campos vazios
+    if not email or not senha:
+        return jsonify({"erro": "E-mail e senha são obrigatórios."}), 400
+
+    # 1. Busca a professora pelo e-mail no Supabase
+    busca = supabase.table('professores').select('*').eq('email', str(email).strip().lower()).execute()
+
+    if not busca.data:
+        return jsonify({"erro": "E-mail ou senha incorretos."}), 401
+
+    professor = busca.data[0]
+    senha_banco = professor.get('senha', '')
+
+    # 2. Confere a senha (seja ela hash ou texto puro dos seus inserts de teste)
+    senha_valida = check_password_hash(senha_banco, str(senha)) or (senha_banco == str(senha))
+    
+    if not senha_valida:
+        return jsonify({"erro": "E-mail ou senha incorretos."}), 401
+
+    # 3. Gera o token JWT e envia a resposta
+    token = gerar_token({"id": professor['id'], "nome": professor['nome']})
+
+    return jsonify({
+        "mensagem": f"Bem-vinda de volta, {professor['nome']}!",
+        "token": token,
+        "professor": {
+            "id": professor['id'],
+            "nome": professor['nome'],
+            "email": professor['email']
+        }
+    }), 200
 
 #Lista os alunos do professor
-@professores_bp.route('/api/aluno/professor/<int:professor_id>', methods=['GET'])
+@professores_bp.route('/aluno/professor/<int:professor_id>', methods=['GET'])
+@token_obrigatorio
 def lista_alunos(professor_id):
     try:
         busca = supabase.table('alunos').select("*").eq('professor_id', professor_id).execute()
@@ -86,7 +105,8 @@ def lista_alunos(professor_id):
     except Exception as e:
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
 
-@professores_bp.route('/api/professores/cadastrar-aluno', methods=['POST'])
+@professores_bp.route('/professores/cadastrar-aluno', methods=['POST'])
+@token_obrigatorio
 def cadastrar_e_avaliar_aluno():
     try:
         dados = request.get_json(silent=True)
@@ -159,7 +179,8 @@ def cadastrar_e_avaliar_aluno():
         return jsonify({"erro": f"Erro analítico no servidor do TCC: {str(e)}"}), 500
     
 
-@professores_bp.route('/api/alunos/<int:id>', methods=['PUT'])
+@professores_bp.route('/alunos/<int:id>', methods=['PUT'])
+@token_obrigatorio
 def editar_aluno(id):
     try:
         dados = request.get_json()
@@ -191,7 +212,8 @@ def editar_aluno(id):
 
 
 
-@professores_bp.route('/api/alunos/<int:id>', methods=['DELETE'])
+@professores_bp.route('/alunos/<int:id>', methods=['DELETE'])
+@token_obrigatorio
 def apagar_alunos(id):
     try:
 
@@ -207,7 +229,8 @@ def apagar_alunos(id):
 
 
 
-@professores_bp.route('/api/desempenho/aluno/<int:aluno_id>', methods=['GET'])
+@professores_bp.route('/desempenho/aluno/<int:aluno_id>', methods=['GET'])
+@token_obrigatorio
 def obter_desempenho_aluno(aluno_id):
     try:
         # 1. BUSCA NA TABELA CORRETA: historico_desempenho
@@ -226,7 +249,8 @@ def obter_desempenho_aluno(aluno_id):
 
 
 
-@professores_bp.route('/api/alunos/perfil/<int:aluno_id>', methods=['GET'])
+@professores_bp.route('/alunos/perfil/<int:aluno_id>', methods=['GET'])
+@token_obrigatorio
 def obter_perfil_aluno(aluno_id):
     try:
         busca = supabase.table('alunos').select('id', 'nome', 'modo_aprendizagem').eq('id', aluno_id).execute()

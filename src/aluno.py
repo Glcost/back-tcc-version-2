@@ -1,9 +1,10 @@
 from flask import Blueprint, request, jsonify
+from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase
 
 alunos_bp = Blueprint('alunos', __name__)
 
-@alunos_bp.route('/api/aluno/login', methods=['POST'])
+@alunos_bp.route('/aluno/login', methods=['POST'])
 def login_aluno():
     try: 
         dados = request.get_json(silent=True)
@@ -25,7 +26,7 @@ def login_aluno():
         return jsonify({"erro": f"Erro no processamento do login: {str(e)}"}), 500
 
 
-@alunos_bp.route('/api/aluno/perfil/<int:aluno_id>', methods=['GET'])
+@alunos_bp.route('/aluno/perfil/<int:aluno_id>', methods=['GET'])
 def obter_perfil_gameplay(aluno_id):
     try:
         # Busca customizada trazendo metadados fundamentais para a customização da UI/UX do jogo
@@ -43,7 +44,7 @@ def obter_perfil_gameplay(aluno_id):
         return jsonify({"erro": f"Erro ao resgatar perfil do jogador: {str(e)}"}), 500
 
 
-@alunos_bp.route('/api/desempenho', methods=['POST'])
+@alunos_bp.route('/desempenho', methods=['POST'])
 def salvar_desempenho():
     try:
         dados = request.get_json(silent=True)

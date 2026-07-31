@@ -2,9 +2,12 @@ import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flasgger import Swagger
+from  dotenv import load_dotenv
 from src.aluno import alunos_bp
 from src.professora import professores_bp
 from src.atividades import atividades_bp
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -15,8 +18,10 @@ app.config['SWAGGER'] = {
 
 swagger = Swagger(app, template_file='openapi.yaml')
 
-# Configuração estrita de CORS para o seu Front-end React
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
+
+CORS(app, origins="*")
 
 # Registro dos módulos da API Roar
 app.register_blueprint(alunos_bp)
