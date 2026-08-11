@@ -1,7 +1,7 @@
 Flask
 flask-cors
-python-dotenv
 supabase
-Werkzeug
-gunicorn
+python-dotenv
+PyJWT
+werkzeug
 flasgger

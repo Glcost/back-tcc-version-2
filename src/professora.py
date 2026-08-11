@@ -13,14 +13,15 @@ def cadastro_professor():
         dados = request.get_json(silent=True) or {}
         
         # 1. Validação de campos obrigatórios (Retorna HTTP 400)
-        if not dados or 'nome' not in dados or 'email' not in dados or 'senha' not in dados:
-            return jsonify({'erro': 'Precisa preencher todos os campos: nome, email e senha.'}), 400
+        if not dados or 'nome' not in dados or 'email' not in dados or 'senha' not in dados or 'cpf' not in dados:
+            return jsonify({'erro': 'Precisa preencher todos os campos: nome, email, senha, CPF'}), 400
         
         email = str(dados.get('email')).strip().lower()
         nome = str(dados.get('nome')).strip()
         senha = str(dados.get('senha')).strip()
+        cpf = int(dados.get('cpf')).strip()
 
-        if not email or not nome or not senha:
+        if not email or not nome or not senha or not cpf:
             return jsonify({'erro': 'Os campos não podem estar em branco.'}), 400
 
         # 2. Verificação de e-mail duplicado no Supabase
@@ -35,7 +36,8 @@ def cadastro_professor():
         req = supabase.table('professores').insert({
             'nome': nome,
             'email': email,
-            'senha': senha_hashed
+            'senha': senha_hashed,
+            'cpf': cpf
         }).execute()
 
         if not req.data:
@@ -47,7 +49,8 @@ def cadastro_professor():
             'professor': {
                 'id': req.data[0]['id'],
                 'nome': req.data[0]['nome'],
-                'email': req.data[0]['email']
+                'email': req.data[0]['email'],
+                'cpf': req.data[0]['cpf']
             }
         }), 201
         
