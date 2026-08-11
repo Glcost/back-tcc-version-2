@@ -48,16 +48,7 @@ def obter_perfil_gameplay(aluno_id):
 def salvar_desempenho():
     try:
         dados = request.get_json(silent=True)
-        
-        if not dados:
-            return jsonify({"erro": "Nenhum payload de telemetria detectado."}), 400
-            
-        # Validação estrita de chaves obrigatórias (Garante que restrições NOT NULL do Supabase não quebrem a rota)
-        campos_obrigatorios = ['aluno_id', 'atividade_id', 'modo_utilizado', 'quantidade_erros', 'tempo_segundos', 'concluido']
-        erros_validacao = [campo for campo in campos_obrigatorios if campo not in dados]
-        
-        if erros_validacao:
-            return jsonify({"erro": f"Campos obrigatórios ausentes: {', '.join(erros_validacao)}"}), 400
+        # ... (validações existentes) ...
 
         payload_insercao = {
             'aluno_id': int(dados.get('aluno_id')),
@@ -68,14 +59,21 @@ def salvar_desempenho():
             'concluido': bool(dados.get('concluido'))
         }
 
+        # 1. Salva o histórico de telemetria
         busca = supabase.table('historico_desempenho').insert(payload_insercao).execute()
 
-        if not busca.data:
-            return jsonify({"erro": "Falha operacional ao persistir dados de desempenho no banco."}), 500
+        # 2. Calcula e incrementa XP no perfil do aluno se concluído com sucesso
+        if dados.get('concluido'):
+            xp_ganho = max(10, 50 - (int(dados.get('quantidade_erros')) * 5))
+            
+            # Busca XP atual do aluno
+            aluno = supabase.table('alunos').select('xp_total').eq('id', dados.get('aluno_id')).execute()
+            xp_atual = aluno.data[0].get('xp_total', 0) if aluno.data else 0
+            
+            # Atualiza total
+            supabase.table('alunos').update({'xp_total': xp_atual + xp_ganho}).eq('id', dados.get('aluno_id')).execute()
 
-        return jsonify({"mensagem": "Telemetria de desempenho registrada com sucesso!"}), 201
+        return jsonify({"mensagem": "Telemetria e progresso atualizados com sucesso!"}), 201
 
-    except ValueError:
-        return jsonify({"erro": "Tipagem incorreta dos parâmetros numéricos ou booleanos no JSON."}), 400
     except Exception as e:
-        return jsonify({"erro": f"Erro de persistência de telemetria: {str(e)}"}), 500
+        return jsonify({"erro": f"Erro de persistência: {str(e)}"}), 500

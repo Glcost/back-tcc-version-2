@@ -1,8 +1,10 @@
-import os
+# app.py
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flasgger import Swagger
-from  dotenv import load_dotenv
+from dotenv import load_dotenv
+import os
+
 from src.aluno import alunos_bp
 from src.professora import professores_bp
 from src.atividades import atividades_bp
@@ -11,22 +13,20 @@ load_dotenv()
 
 app = Flask(__name__)
 
-#VERSÃO do OPEN API
 app.config['SWAGGER'] = {
-    'openapi':'3.0.0'
+    'openapi': '3.0.0'
 }
 
 swagger = Swagger(app, template_file='openapi.yaml')
-
-
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
 
-CORS(app, origins="*")
+# Suporte total a CORS para Vercel e chamadas de origens externas
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Registro dos módulos da API Roar
-app.register_blueprint(alunos_bp)
-app.register_blueprint(professores_bp)
-app.register_blueprint(atividades_bp)
+# Registro dos módulos organizados por prefixo
+app.register_blueprint(professores_bp, url_prefix='/professores')
+app.register_blueprint(alunos_bp, url_prefix='/alunos')
+app.register_blueprint(atividades_bp, url_prefix='/atividades')
 
 @app.route('/', methods=['GET'])
 def index():
@@ -37,5 +37,4 @@ def index():
     }), 200
 
 if __name__ == '__main__':
-    # Roda localmente na porta 5000
     app.run(debug=True, port=5000)
