@@ -6,44 +6,39 @@ from src.bd_config import supabase
 professores_bp = Blueprint('professores', __name__)
 
 
-
 @professores_bp.route('/cadastro', methods=['POST'])
 def cadastro_professor():
- try:
+    try:
         dados = request.get_json(silent=True) or {}
         
-        # 1. Validação de campos obrigatórios (Retorna HTTP 400)
-        if not dados or 'nome' not in dados or 'email' not in dados or 'senha' not in dados or 'cpf' not in dados:
-            return jsonify({'erro': 'Precisa preencher todos os campos: nome, email, senha, CPF'}), 400
+        # 1. Validação de campos obrigatórios
+        campos = ['nome', 'email', 'senha', 'cpf']
+        if not all(k in dados and str(dados[k]).strip() for k in campos):
+            return jsonify({'erro': 'Todos os campos são obrigatórios: nome, email, senha e CPF.'}), 400
         
         email = str(dados.get('email')).strip().lower()
         nome = str(dados.get('nome')).strip()
         senha = str(dados.get('senha')).strip()
-        cpf = int(dados.get('cpf')).strip()
+        cpf_texto = str(dados.get('cpf')).strip()
 
-        if not email or not nome or not senha or not cpf:
-            return jsonify({'erro': 'Os campos não podem estar em branco.'}), 400
-
-        # 2. Verificação de e-mail duplicado no Supabase
-        busca = supabase.table('professores').select('*').eq('email', email).execute()
-        
+        # 2. Verificação de e-mail duplicado
+        busca = supabase.table('professores').select('id').eq('email', email).execute()
         if len(busca.data) > 0:
-            return jsonify({'erro': 'E-mail já cadastrado. Por favor, use outro e-mail ou faça login.'}), 409
+            return jsonify({'erro': 'E-mail já cadastrado.'}), 409
         
-        # 3. Hashing da senha e inserção
+        # 3. Hashing da senha e inserção no Supabase
         senha_hashed = generate_password_hash(senha)
         
         req = supabase.table('professores').insert({
             'nome': nome,
             'email': email,
             'senha': senha_hashed,
-            'cpf': cpf
+            'cpf': cpf_texto
         }).execute()
 
         if not req.data:
             return jsonify({'erro': 'Falha ao registrar professor no banco de dados.'}), 500
         
-        # 4. Retorno explícito de sucesso (HTTP 201)
         return jsonify({
             'mensagem': 'Professor cadastrado com sucesso!',
             'professor': {
@@ -54,7 +49,7 @@ def cadastro_professor():
             }
         }), 201
         
- except Exception as e:
+    except Exception as e:
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
         
 
