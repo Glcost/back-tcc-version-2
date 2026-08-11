@@ -103,7 +103,7 @@ def lista_alunos(professor_id):
     except Exception as e:
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
 
-@professores_bp.route('/professores/cadastrar-aluno', methods=['POST'])
+@professores_bp.route('/cadastrar-aluno', methods=['POST'])
 @token_obrigatorio
 def cadastrar_e_avaliar_aluno():
     try:
