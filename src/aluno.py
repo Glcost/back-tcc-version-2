@@ -26,22 +26,73 @@ def login_aluno():
         return jsonify({"erro": f"Erro no processamento do login: {str(e)}"}), 500
 
 
-@alunos_bp.route('/perfil/<int:aluno_id>', methods=['GET'])
+@alunos_bp.route('/aluno/perfil/<int:aluno_id>', methods=['GET'])
 def obter_perfil_gameplay(aluno_id):
     try:
-        # Busca customizada trazendo metadados fundamentais para a customização da UI/UX do jogo
-        busca = supabase.table('alunos') \
-            .select('id', 'nome', 'ano_escolar', 'modo_aprendizagem', 'hiperfoco') \
+        # 1. Busca dados do aluno
+        aluno_res = supabase.table('alunos') \
+            .select('id, nome, ano_escolar, email, modo_aprendizagem, hiperfoco, xp_total, professor_id') \
             .eq('id', aluno_id) \
             .execute()
             
-        if len(busca.data) == 0:
+        if not aluno_res.data:
             return jsonify({"erro": "Registro de aluno inexistente."}), 404
+
+        aluno = aluno_res.data[0]
+
+        # 2. Busca o nome do professor com tratamento seguro caso professor_id seja NULL
+        nome_professor = "Não atribuído"
+        professor_id = aluno.get("professor_id")
+
+        if professor_id:
+            prof_res = supabase.table('professores') \
+                .select('nome') \
+                .eq('id', professor_id) \
+                .execute()
             
-        return jsonify(busca.data[0]), 200
+            if prof_res.data and len(prof_res.data) > 0:
+                nome_professor = prof_res.data[0].get("nome", "Não atribuído")
+
+        # 3. Consulta avaliação inicial (se existir)
+        avaliacao_res = supabase.table('avaliacao_inicial') \
+            .select('nivel_comunicacao, forma_comunicacao, suporte_audio, resultado_modo') \
+            .eq('aluno_id', aluno_id) \
+            .order('id', desc=True) \
+            .limit(1) \
+            .execute()
+
+        # 4. Consulta histórico de desempenho
+        desempenho_res = supabase.table('historico_desempenho') \
+            .select('id', count='exact') \
+            .eq('aluno_id', aluno_id) \
+            .eq('concluido', True) \
+            .execute()
+
+        total_concluidas = desempenho_res.count if desempenho_res.count is not None else 0
+        avaliacao_dados = avaliacao_res.data[0] if avaliacao_res.data else {}
+
+        payload = {
+            "id": aluno.get("id"),
+            "nome": aluno.get("nome"),
+            "email": aluno.get("email"),
+            "ano_escolar": aluno.get("ano_escolar"),
+            "modo_aprendizagem": aluno.get("modo_aprendizagem"),
+            "hiperfoco": aluno.get("hiperfoco"),
+            "xp_total": aluno.get("xp_total") or 0,
+            "professor": nome_professor,
+            "atividades_concluidas": total_concluidas,
+            "avaliacao": {
+                "nivel_comunicacao": avaliacao_dados.get("nivel_comunicacao"),
+                "forma_comunicacao": avaliacao_dados.get("forma_comunicacao"),
+                "suporte_audio": avaliacao_dados.get("suporte_audio"),
+                "resultado_modo": avaliacao_dados.get("resultado_modo")
+            }
+        }
+            
+        return jsonify(payload), 200
         
     except Exception as e:
-        return jsonify({"erro": f"Erro ao resgatar perfil do jogador: {str(e)}"}), 500
+        return jsonify({"erro": f"Erro ao resgatar perfil: {str(e)}"}), 500
 
 
 @alunos_bp.route('/desempenho', methods=['POST'])
