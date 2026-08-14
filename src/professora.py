@@ -120,13 +120,13 @@ def cadastrar_e_avaliar_aluno():
         # Aplicação rigorosa da Matriz de Decisão do Escopo
         if pergunta_a == 'A1' or pergunta_b == 'B1':
             nivel_calculado = 1
-            modo_aprendizagem = 'Visual_Guiado'
+            modo_aprendizagem = 'Visual Guiado'
             
         elif (pergunta_a == 'A2' and pergunta_b == 'B2') or \
              (pergunta_a == 'A2' and pergunta_b == 'B3') or \
              (pergunta_a == 'A3' and pergunta_b == 'B2'):
             nivel_calculado = 2
-            modo_aprendizagem = 'Interativo_Visual'
+            modo_aprendizagem = 'Interativo Visual'
             
         elif pergunta_a == 'A3' and pergunta_b == 'B3':
             nivel_calculado = 3
