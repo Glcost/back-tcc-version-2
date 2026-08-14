@@ -143,7 +143,9 @@ def cadastrar_e_avaliar_aluno():
             "ano_escolar": dados.get('ano_escolar'),
             "modo_aprendizagem": modo_aprendizagem,
             "hiperfoco": dados.get('hiperfoco', None),
-            "pin_acesso": dados.get('pin_acesso', '1234')
+            "pin_acesso": dados.get('pin_acesso', '1234'),
+            "xp": dados.get('xp', 0)
+            
         }
         
         req_aluno = supabase.table('alunos').insert(aluno_payload).execute()
