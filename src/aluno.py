@@ -26,7 +26,7 @@ def login_aluno():
         return jsonify({"erro": f"Erro no processamento do login: {str(e)}"}), 500
 
 
-@alunos_bp.route('/aluno/perfil/<int:aluno_id>', methods=['GET'])
+@alunos_bp.route('/perfil/<int:aluno_id>', methods=['GET'])
 def obter_perfil_gameplay(aluno_id):
     try:
         # 1. Busca dados do aluno
