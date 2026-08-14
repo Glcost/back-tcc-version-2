@@ -144,7 +144,6 @@ def cadastrar_e_avaliar_aluno():
             "modo_aprendizagem": modo_aprendizagem,
             "hiperfoco": dados.get('hiperfoco', None),
             "pin_acesso": dados.get('pin_acesso', '1234'),
-            "xp": dados.get('xp', 0)
             
         }
         

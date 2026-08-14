@@ -4,7 +4,7 @@ from src.bd_config import supabase
 
 alunos_bp = Blueprint('alunos', __name__)
 
-@alunos_bp.route('/aluno/login', methods=['POST'])
+@alunos_bp.route('/login', methods=['POST'])
 def login_aluno():
     try: 
         dados = request.get_json(silent=True)
