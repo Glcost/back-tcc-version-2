@@ -247,6 +247,45 @@ def obter_desempenho_aluno(aluno_id):
 
 
 
+
+
+
+@professores_bp.route('/dashboard/estatisticas/<int:professor_id>', methods=['GET'])
+@token_obrigatorio
+def estatisticas_dashboard(professor_id):
+    try:
+        # 1. Busca total de atividades ativas cadastradas no sistema
+        atividades_req = supabase.table('atividades').select('id', count='exact').execute()
+        total_atividades = atividades_req.count if atividades_req.count is not None else len(atividades_req.data)
+
+        # 2. Busca lista de IDs de alunos vinculados a esta professora
+        alunos_req = supabase.table('alunos').select('id').eq('professor_id', professor_id).execute()
+        alunos_ids = [a['id'] for a in alunos_req.data]
+
+        if not alunos_ids:
+            return jsonify({
+                'total_atividades': total_atividades,
+                'media_turma': 0
+            }), 200
+
+        # 3. Calcula a taxa global de conclusão/sucesso do historico_desempenho da turma
+        desempenho_req = supabase.table('historico_desempenho').select('concluido').in_('aluno_id', alunos_ids).execute()
+        
+        total_jogos = len(desempenho_req.data)
+        if total_jogos == 0:
+            media_turma = 0
+        else:
+            concluidos = sum(1 for d in desempenho_req.data if d.get('concluido'))
+            media_turma = round((concluidos / total_jogos) * 100)
+
+        return jsonify({
+            'total_atividades': total_atividades,
+            'media_turma': media_turma
+        }), 200
+
+    except Exception as e:
+        return jsonify({"erro": f"Erro ao calcular estatísticas: {str(e)}"}), 500
+
 @professores_bp.route('/alunos/perfil/<int:aluno_id>', methods=['GET'])
 @token_obrigatorio
 def obter_perfil_aluno(aluno_id):
