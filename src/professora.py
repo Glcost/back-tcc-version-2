@@ -121,6 +121,14 @@ def cadastrar_e_avaliar_aluno():
         campos_obrigatorios = ['professor_id', 'nome', 'email','cpf_aluno' 'ano_escolar', 'pergunta_a', 'pergunta_b']
         if not all(campo in dados for campo in campos_obrigatorios):
             return jsonify({"erro": "Dados insuficientes para cadastro e avaliação."}), 400
+        
+        
+        cpf_aluno = str(dados.get('cpf_aluno')).strip()
+        email = str(dados.get('email')).strip().lower()
+
+        # 2. Validação do CPF do aluno com a biblioteca validate-docbr
+        if not cpf_validate.validate(cpf_aluno):
+            return jsonify({"erro": "O CPF informado para o aluno é inválido."}), 400
 
         pergunta_a = dados.get('pergunta_a')
         pergunta_b = dados.get('pergunta_b')
@@ -163,8 +171,6 @@ def cadastrar_e_avaliar_aluno():
         }
         
         req_aluno = supabase.table('alunos').insert(aluno_payload).execute()
-        if not req_aluno.data:
-            return jsonify({"erro": "Erro ao registrar dados cadastrais do aluno."}), 500
             
         aluno_id = req_aluno.data[0]['id']
 
