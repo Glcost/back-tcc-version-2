@@ -1,7 +1,10 @@
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash , check_password_hash
+from validate_docbr import CPF
 from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase
+
+cpf_validate = CPF()
 
 professores_bp = Blueprint('professores', __name__)
 
@@ -20,6 +23,10 @@ def cadastro_professor():
         nome = str(dados.get('nome')).strip()
         senha = str(dados.get('senha')).strip()
         cpf_texto = str(dados.get('cpf')).strip()
+        
+        
+        if not cpf_validate.validate(cpf_texto):
+            return jsonify({'erro': 'CPF informado é inválido'})
 
         # 2. Verificação de e-mail duplicado
         busca = supabase.table('professores').select('id').eq('email', email).execute()
@@ -59,6 +66,7 @@ def login_professor():
     dados = request.get_json() or {}
     email = dados.get('email')
     senha = dados.get('senha')
+    
 
     # Validação rápida de campos vazios
     if not email or not senha:
@@ -110,7 +118,7 @@ def cadastrar_e_avaliar_aluno():
         dados = request.get_json(silent=True) or {}
         
         # Validação dos campos obrigatórios
-        campos_obrigatorios = ['professor_id', 'nome', 'email', 'ano_escolar', 'pergunta_a', 'pergunta_b']
+        campos_obrigatorios = ['professor_id', 'nome', 'email','cpf_aluno' 'ano_escolar', 'pergunta_a', 'pergunta_b']
         if not all(campo in dados for campo in campos_obrigatorios):
             return jsonify({"erro": "Dados insuficientes para cadastro e avaliação."}), 400
 
@@ -149,8 +157,8 @@ def cadastrar_e_avaliar_aluno():
             "nome": dados.get('nome'),
             "email": dados.get('email'),
             "ano_escolar": dados.get('ano_escolar'),
+            "cpf_aluno": dados.get('cpf_aluno'),
             "modo_aprendizagem": modo_aprendizagem,
-            "hiperfoco": dados.get('hiperfoco', None),
             "pin_acesso": dados.get('pin_acesso', '1234')
         }
         
