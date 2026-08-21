@@ -16,6 +16,8 @@ tags:
     description: Gerenciamento de alunos, turmas e relatórios de progresso
   - name: Atividades
     description: Motor do jogo e listagem de conteúdos pedagógicos
+  - name: Relatorios
+    description: Módulo de BI - agregações e dashboards de desempenho
 
 paths:
   # --- TAG: ALUNOS ---
@@ -230,3 +232,90 @@ paths:
           description: Aluno desvinculado com sucesso
         '500':
           description: Erro interno
+
+  # --- TAG: RELATORIOS (BI) ---
+  /api/relatorios/visao-geral:
+    get:
+      tags:
+        - Relatorios
+      summary: Visão geral agregada de toda a plataforma
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Totais, taxas de conclusão e distribuição por modo de aprendizagem
+        '500':
+          description: Erro interno
+
+  /api/relatorios/professor/{professor_id}:
+    get:
+      tags:
+        - Relatorios
+      summary: Dashboard consolidado de todos os alunos de um professor
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: professor_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Ranking de XP, distribuição por modo e alunos com possível dificuldade
+        '404':
+          description: Nenhum aluno encontrado para este professor
+        '500':
+          description: Erro interno
+
+  /api/relatorios/aluno/{aluno_id}:
+    get:
+      tags:
+        - Relatorios
+      summary: Relatório individual de evolução do aluno ao longo do tempo
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: aluno_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Resumo de desempenho e evolução diária
+        '404':
+          description: Aluno não encontrado
+        '500':
+          description: Erro interno
+
+  /api/relatorios/modulo/{modulo_id}:
+    get:
+      tags:
+        - Relatorios
+      summary: Relatório pedagógico de um módulo (dificuldade por atividade)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: modulo_id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 2
+      responses:
+        '200':
+          description: Estatísticas por atividade e ranking das mais difíceis
+        '404':
+          description: Nenhuma atividade encontrada para este módulo
+        '500':
+          description: Erro interno
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
