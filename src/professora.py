@@ -1,7 +1,10 @@
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash , check_password_hash
+from validate_docbr import CPF
 from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase
+
+cpf_validate = CPF()
 
 professores_bp = Blueprint('professores', __name__)
 
@@ -20,6 +23,10 @@ def cadastro_professor():
         nome = str(dados.get('nome')).strip()
         senha = str(dados.get('senha')).strip()
         cpf_texto = str(dados.get('cpf')).strip()
+        
+        
+        if not cpf_validate.validate(cpf_texto):
+            return jsonify({'erro': 'CPF informado é inválido'})
 
         # 2. Verificação de e-mail duplicado
         busca = supabase.table('professores').select('id').eq('email', email).execute()
@@ -59,6 +66,7 @@ def login_professor():
     dados = request.get_json() or {}
     email = dados.get('email')
     senha = dados.get('senha')
+    
 
     # Validação rápida de campos vazios
     if not email or not senha:
@@ -107,59 +115,72 @@ def lista_alunos(professor_id):
 @token_obrigatorio
 def cadastrar_e_avaliar_aluno():
     try:
-        dados = request.get_json(silent=True)
+        dados = request.get_json(silent=True) or {}
         
-        # Validação inicial dos campos obrigatórios do aluno e do questionário
-        campos_obrigatorios = ['professor_id', 'nome', 'email', 'ano_escolar', 'pergunta_a', 'pergunta_b']
-        if not dados or not all(campo in dados for campo in campos_obrigatorios):
+        # Validação dos campos obrigatórios
+        campos_obrigatorios = ['professor_id', 'nome', 'email','cpf_aluno' 'ano_escolar', 'pergunta_a', 'pergunta_b']
+        if not all(campo in dados for campo in campos_obrigatorios):
             return jsonify({"erro": "Dados insuficientes para cadastro e avaliação."}), 400
+        
+        
+        cpf_aluno = str(dados.get('cpf_aluno')).strip()
+        email = str(dados.get('email')).strip().lower()
 
-        pergunta_a = dados.get('pergunta_a')  # Espera: 'A1', 'A2' ou 'A3'
-        pergunta_b = dados.get('pergunta_b')  # Espera: 'B1', 'B2' ou 'B3'
+        # 2. Validação do CPF do aluno com a biblioteca validate-docbr
+        if not cpf_validate.validate(cpf_aluno):
+            return jsonify({"erro": "O CPF informado para o aluno é inválido."}), 400
 
-        # Aplicação rigorosa da Matriz de Decisão do Escopo
-        if pergunta_a == 'A1' or pergunta_b == 'B1':
-            nivel_calculado = 1
-            modo_aprendizagem = 'Visual_Guiado'
-            
-        elif (pergunta_a == 'A2' and pergunta_b == 'B2') or \
-             (pergunta_a == 'A2' and pergunta_b == 'B3') or \
-             (pergunta_a == 'A3' and pergunta_b == 'B2'):
-            nivel_calculado = 2
-            modo_aprendizagem = 'Interativo_Visual'
-            
-        elif pergunta_a == 'A3' and pergunta_b == 'B3':
-            nivel_calculado = 3
-            modo_aprendizagem = 'Verbal'
-            
+        pergunta_a = dados.get('pergunta_a')
+        pergunta_b = dados.get('pergunta_b')
+
+        # Dicionário para conversão direta de nível em modo de aprendizagem
+        modos_map = {
+            1: 'Visual Guiado',
+            2: 'Interativo Visual',
+            3: 'Verbal'
+        }
+
+        # 1. Prioriza o nível ajustado manualmente pela professora no Step 3
+        nivel_manual = dados.get('nivel')
+        if nivel_manual and int(nivel_manual) in modos_map:
+            nivel_calculado = int(nivel_manual)
+            modo_aprendizagem = modos_map[nivel_calculado]
         else:
-            return jsonify({"erro": "Combinação de respostas inválida para a matriz de decisão."}), 400
+            # 2. Caso não venha alteração manual, aplica a Matriz de Decisão
+            if pergunta_a == 'A1' or pergunta_b == 'B1':
+                nivel_calculado = 1
+                modo_aprendizagem = 'Visual Guiado'
+            elif (pergunta_a == 'A2' and pergunta_b in ['B2', 'B3']) or (pergunta_a == 'A3' and pergunta_b == 'B2'):
+                nivel_calculado = 2
+                modo_aprendizagem = 'Interativo Visual'
+            elif pergunta_a == 'A3' and pergunta_b == 'B3':
+                nivel_calculado = 3
+                modo_aprendizagem = 'Verbal'
+            else:
+                return jsonify({"erro": "Combinação de respostas inválida para a matriz de decisão."}), 400
 
-        # 1. Insere o Aluno com o modo já classificado pelo algoritmo
+        # Persistência na tabela 'alunos'
         aluno_payload = {
             "professor_id": dados.get('professor_id'),
             "nome": dados.get('nome'),
             "email": dados.get('email'),
             "ano_escolar": dados.get('ano_escolar'),
+            "cpf_aluno": dados.get('cpf_aluno'),
             "modo_aprendizagem": modo_aprendizagem,
-            "hiperfoco": dados.get('hiperfoco', None),
             "pin_acesso": dados.get('pin_acesso', '1234')
         }
         
         req_aluno = supabase.table('alunos').insert(aluno_payload).execute()
-        if not req_aluno.data:
-            return jsonify({"erro": "Erro ao registrar dados cadastrais do aluno."}), 500
             
         aluno_id = req_aluno.data[0]['id']
 
-        # 2. Registra o histórico da avaliação inicial vinculada ao ID do aluno gerado
+        # Persistência na tabela 'avaliacao_inicial'
         avaliacao_payload = {
             "aluno_id": aluno_id,
             "nivel_comunicacao": pergunta_a, 
             "forma_comunicacao": pergunta_b,
             "suporte_audio": dados.get('suporte_audio', False),
             "resultado_modo": modo_aprendizagem
-            # O nível calculado (1, 2 ou 3) pode ser inferido pelo modo ou adicionado como coluna extra se achar necessário
         }
         
         req_avaliacao = supabase.table('avaliacao_inicial').insert(avaliacao_payload).execute()
@@ -174,7 +195,7 @@ def cadastrar_e_avaliar_aluno():
         }), 201
 
     except Exception as e:
-        return jsonify({"erro": f"Erro analítico no servidor do TCC: {str(e)}"}), 500
+        return jsonify({"erro": f"Erro analítico no servidor: {str(e)}"}), 500
     
 
 @professores_bp.route('/alunos/<int:id>', methods=['PUT'])
@@ -246,6 +267,45 @@ def obter_desempenho_aluno(aluno_id):
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
 
 
+
+
+
+
+@professores_bp.route('/dashboard/estatisticas/<int:professor_id>', methods=['GET'])
+@token_obrigatorio
+def estatisticas_dashboard(professor_id):
+    try:
+        # 1. Busca total de atividades ativas cadastradas no sistema
+        atividades_req = supabase.table('atividades').select('id', count='exact').execute()
+        total_atividades = atividades_req.count if atividades_req.count is not None else len(atividades_req.data)
+
+        # 2. Busca lista de IDs de alunos vinculados a esta professora
+        alunos_req = supabase.table('alunos').select('id').eq('professor_id', professor_id).execute()
+        alunos_ids = [a['id'] for a in alunos_req.data]
+
+        if not alunos_ids:
+            return jsonify({
+                'total_atividades': total_atividades,
+                'media_turma': 0
+            }), 200
+
+        # 3. Calcula a taxa global de conclusão/sucesso do historico_desempenho da turma
+        desempenho_req = supabase.table('historico_desempenho').select('concluido').in_('aluno_id', alunos_ids).execute()
+        
+        total_jogos = len(desempenho_req.data)
+        if total_jogos == 0:
+            media_turma = 0
+        else:
+            concluidos = sum(1 for d in desempenho_req.data if d.get('concluido'))
+            media_turma = round((concluidos / total_jogos) * 100)
+
+        return jsonify({
+            'total_atividades': total_atividades,
+            'media_turma': media_turma
+        }), 200
+
+    except Exception as e:
+        return jsonify({"erro": f"Erro ao calcular estatísticas: {str(e)}"}), 500
 
 @professores_bp.route('/alunos/perfil/<int:aluno_id>', methods=['GET'])
 @token_obrigatorio
