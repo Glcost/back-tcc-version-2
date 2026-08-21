@@ -107,35 +107,43 @@ def lista_alunos(professor_id):
 @token_obrigatorio
 def cadastrar_e_avaliar_aluno():
     try:
-        dados = request.get_json(silent=True)
+        dados = request.get_json(silent=True) or {}
         
-        # Validação inicial dos campos obrigatórios do aluno e do questionário
+        # Validação dos campos obrigatórios
         campos_obrigatorios = ['professor_id', 'nome', 'email', 'ano_escolar', 'pergunta_a', 'pergunta_b']
-        if not dados or not all(campo in dados for campo in campos_obrigatorios):
+        if not all(campo in dados for campo in campos_obrigatorios):
             return jsonify({"erro": "Dados insuficientes para cadastro e avaliação."}), 400
 
-        pergunta_a = dados.get('pergunta_a')  # Espera: 'A1', 'A2' ou 'A3'
-        pergunta_b = dados.get('pergunta_b')  # Espera: 'B1', 'B2' ou 'B3'
+        pergunta_a = dados.get('pergunta_a')
+        pergunta_b = dados.get('pergunta_b')
 
-        # Aplicação rigorosa da Matriz de Decisão do Escopo
-        if pergunta_a == 'A1' or pergunta_b == 'B1':
-            nivel_calculado = 1
-            modo_aprendizagem = 'Visual Guiado'
-            
-        elif (pergunta_a == 'A2' and pergunta_b == 'B2') or \
-             (pergunta_a == 'A2' and pergunta_b == 'B3') or \
-             (pergunta_a == 'A3' and pergunta_b == 'B2'):
-            nivel_calculado = 2
-            modo_aprendizagem = 'Interativo Visual'
-            
-        elif pergunta_a == 'A3' and pergunta_b == 'B3':
-            nivel_calculado = 3
-            modo_aprendizagem = 'Verbal'
-            
+        # Dicionário para conversão direta de nível em modo de aprendizagem
+        modos_map = {
+            1: 'Visual Guiado',
+            2: 'Interativo Visual',
+            3: 'Verbal'
+        }
+
+        # 1. Prioriza o nível ajustado manualmente pela professora no Step 3
+        nivel_manual = dados.get('nivel')
+        if nivel_manual and int(nivel_manual) in modos_map:
+            nivel_calculado = int(nivel_manual)
+            modo_aprendizagem = modos_map[nivel_calculado]
         else:
-            return jsonify({"erro": "Combinação de respostas inválida para a matriz de decisão."}), 400
+            # 2. Caso não venha alteração manual, aplica a Matriz de Decisão
+            if pergunta_a == 'A1' or pergunta_b == 'B1':
+                nivel_calculado = 1
+                modo_aprendizagem = 'Visual Guiado'
+            elif (pergunta_a == 'A2' and pergunta_b in ['B2', 'B3']) or (pergunta_a == 'A3' and pergunta_b == 'B2'):
+                nivel_calculado = 2
+                modo_aprendizagem = 'Interativo Visual'
+            elif pergunta_a == 'A3' and pergunta_b == 'B3':
+                nivel_calculado = 3
+                modo_aprendizagem = 'Verbal'
+            else:
+                return jsonify({"erro": "Combinação de respostas inválida para a matriz de decisão."}), 400
 
-        # 1. Insere o Aluno com o modo já classificado pelo algoritmo
+        # Persistência na tabela 'alunos'
         aluno_payload = {
             "professor_id": dados.get('professor_id'),
             "nome": dados.get('nome'),
@@ -143,8 +151,7 @@ def cadastrar_e_avaliar_aluno():
             "ano_escolar": dados.get('ano_escolar'),
             "modo_aprendizagem": modo_aprendizagem,
             "hiperfoco": dados.get('hiperfoco', None),
-            "pin_acesso": dados.get('pin_acesso', '1234'),
-            
+            "pin_acesso": dados.get('pin_acesso', '1234')
         }
         
         req_aluno = supabase.table('alunos').insert(aluno_payload).execute()
@@ -153,14 +160,13 @@ def cadastrar_e_avaliar_aluno():
             
         aluno_id = req_aluno.data[0]['id']
 
-        # 2. Registra o histórico da avaliação inicial vinculada ao ID do aluno gerado
+        # Persistência na tabela 'avaliacao_inicial'
         avaliacao_payload = {
             "aluno_id": aluno_id,
             "nivel_comunicacao": pergunta_a, 
             "forma_comunicacao": pergunta_b,
             "suporte_audio": dados.get('suporte_audio', False),
             "resultado_modo": modo_aprendizagem
-            # O nível calculado (1, 2 ou 3) pode ser inferido pelo modo ou adicionado como coluna extra se achar necessário
         }
         
         req_avaliacao = supabase.table('avaliacao_inicial').insert(avaliacao_payload).execute()
@@ -175,7 +181,7 @@ def cadastrar_e_avaliar_aluno():
         }), 201
 
     except Exception as e:
-        return jsonify({"erro": f"Erro analítico no servidor do TCC: {str(e)}"}), 500
+        return jsonify({"erro": f"Erro analítico no servidor: {str(e)}"}), 500
     
 
 @professores_bp.route('/alunos/<int:id>', methods=['PUT'])
