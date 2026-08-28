@@ -9,10 +9,22 @@ cpf_validate = CPF()
 professores_bp = Blueprint('professores', __name__)
 
 
+def verificar_professor(professor_id_rota, professor_id_token):
+    return int(professor_id_rota) == int(professor_id_token)
+
+def verificar_professor_aluno(aluno_id, professor_id_token):
+    res = supabase.table('alunos').select('professor_id').eq('id', aluno_id).execute()
+    if not res.data:
+        return False
+    return res.data[0].get('professor_id') == professor_id_token
+
 @professores_bp.route('/cadastro', methods=['POST'])
 def cadastro_professor():
     try:
         dados = request.get_json(silent=True) or {}
+        
+        if not verificar_professor(dados.get('professor_id'), request.professor_id):
+            return jsonify({"erro": "Acesso não autorizado."}), 403
         
         # 1. Validação de campos obrigatórios
         campos = ['nome', 'email', 'senha', 'cpf']
@@ -104,6 +116,9 @@ def login_professor():
 @professores_bp.route('/aluno/professor/<int:professor_id>', methods=['GET'])
 @token_obrigatorio
 def lista_alunos(professor_id):
+    
+    if not verificar_professor(professor_id, request.professor_id):
+        return jsonify({"erro": "Acesso não autorizado a este professor."}), 403
     try:
         busca = supabase.table('alunos').select("*").eq('professor_id', professor_id).execute()
         return jsonify(busca.data), 200
@@ -202,6 +217,8 @@ def cadastrar_e_avaliar_aluno():
 @professores_bp.route('/alunos/<int:id>', methods=['PUT'])
 @token_obrigatorio
 def editar_aluno(id):
+    if not verificar_professor_aluno(id, request.professor_id):
+      return jsonify({"erro": "Acesso não autorizado a este aluno."}), 403
     try:
         dados = request.get_json()
         if not dados:
@@ -275,6 +292,8 @@ def obter_desempenho_aluno(aluno_id):
 @professores_bp.route('/dashboard/estatisticas/<int:professor_id>', methods=['GET'])
 @token_obrigatorio
 def estatisticas_dashboard(professor_id):
+    if not verificar_professor(professor_id, request.professor_id):
+        return jsonify({"erro": "Acesso não autorizado a este professor."}), 403
     try:
         # 1. Busca total de atividades ativas cadastradas no sistema
         atividades_req = supabase.table('atividades').select('id', count='exact').execute()
