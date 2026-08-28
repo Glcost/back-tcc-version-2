@@ -127,7 +127,6 @@ def lista_alunos(professor_id):
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
 
 @professores_bp.route('/cadastrar-aluno', methods=['POST'])
-@token_obrigatorio
 def cadastrar_e_avaliar_aluno():
     try:
         dados = request.get_json(silent=True) or {}
