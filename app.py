@@ -8,6 +8,7 @@ import os
 from src.aluno import alunos_bp
 from src.professora import professores_bp
 from src.atividades import atividades_bp
+from src.relatorios import relatorios_bp
 
 load_dotenv()
 
@@ -27,6 +28,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 app.register_blueprint(professores_bp, url_prefix='/professores')
 app.register_blueprint(alunos_bp, url_prefix='/alunos')
 app.register_blueprint(atividades_bp, url_prefix='/atividades')
+app.register_blueprint(relatorios_bp, url_prefix='/relatorios')
 
 @app.route('/', methods=['GET'])
 def index():
