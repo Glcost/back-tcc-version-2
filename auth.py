@@ -17,19 +17,14 @@ def gerar_token(usuario):
     - token JWT assinado com a SECRET_KEY da aplicação
     """
     payload = {
-        "professor_id": usuario["id"],   # ID do professor
+        "professor_id": usuario["id"],   # <--- chave específica
         "nome": usuario["nome"],
-        "perfil": "professor",           # perfil fixo
+        "perfil": "professor",
         "exp": datetime.now(timezone.utc) + timedelta(hours=1)
     }
-
-    token = jwt.encode(
-        payload,
-        current_app.config["SECRET_KEY"],
-        algorithm="HS256"
-    )
+    token = jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm="HS256")
+    
     return token
-
 
 # ==========================
 # DECORATOR PARA PROTEGER ROTAS
