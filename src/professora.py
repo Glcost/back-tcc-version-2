@@ -26,6 +26,9 @@ def cadastro_professor():
         if not verificar_professor(dados.get('professor_id'), request.professor_id):
             return jsonify({"erro": "Acesso não autorizado."}), 403
         
+        if not verificar_professor(dados.get('professor_id'), request.professor_id):
+            return jsonify({"erro": "Acesso não autorizado."}), 403
+        
         # 1. Validação de campos obrigatórios
         campos = ['nome', 'email', 'senha', 'cpf']
         if not all(k in dados and str(dados[k]).strip() for k in campos):
@@ -127,6 +130,7 @@ def lista_alunos(professor_id):
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
 
 @professores_bp.route('/cadastrar-aluno', methods=['POST'])
+@token_obrigatorio
 def cadastrar_e_avaliar_aluno():
     try:
         dados = request.get_json(silent=True) or {}
