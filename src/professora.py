@@ -22,12 +22,7 @@ def verificar_professor_aluno(aluno_id, professor_id_token):
 def cadastro_professor():
     try:
         dados = request.get_json(silent=True) or {}
-        
-        if not verificar_professor(dados.get('professor_id'), request.professor_id):
-            return jsonify({"erro": "Acesso não autorizado."}), 403
-        
-        if not verificar_professor(dados.get('professor_id'), request.professor_id):
-            return jsonify({"erro": "Acesso não autorizado."}), 403
+    
         
         # 1. Validação de campos obrigatórios
         campos = ['nome', 'email', 'senha', 'cpf']
