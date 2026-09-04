@@ -257,6 +257,9 @@ def editar_aluno(id):
 def apagar_alunos(id):
     try:
 
+        if not verificar_professor_aluno(id, request.professor_id):
+            return jsonify({"erro": "Acesso não autorizado a este aluno."}), 403
+
         busca = supabase.table('alunos').delete().eq('id', id).execute()
 
         return jsonify({"mensagem": f"Aluno removido com sucesso {busca.data}"}), 200
