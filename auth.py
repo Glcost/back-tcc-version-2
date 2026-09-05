@@ -1,48 +1,40 @@
+# auth.py
 import jwt
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from flask import request, jsonify, current_app
 
-# ==========================
-# FUNÇÃO PARA GERAR TOKEN JWT
-# ==========================
-def gerar_token(usuario):
+def gerar_token(usuario, perfil="professor"):
     """
-    Gera um token JWT com tempo de expiração.
-
-    Parâmetro:
-    - usuario: dicionário com 'id' e 'nome' do professor
-
-    Retorno:
-    - token JWT assinado com a SECRET_KEY da aplicação
+    Gera um token JWT com claim dinamica de perfil ('professor' ou 'aluno').
     """
     payload = {
-        "professor_id": usuario["id"],   # <--- chave específica
-        "nome": usuario["nome"],
-        "perfil": "professor",
-        "exp": datetime.now(timezone.utc) + timedelta(hours=1)
+        "sub": usuario["id"],
+        "nome": usuario.get("nome", ""),
+        "perfil": perfil,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=8)
     }
-    token = jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm="HS256")
     
-    return token
+    if perfil == "professor":
+        payload["professor_id"] = usuario["id"]
+    elif perfil == "aluno":
+        payload["aluno_id"] = usuario["id"]
 
-# ==========================
-# DECORATOR PARA PROTEGER ROTAS
-# ==========================
+    return jwt.encode(payload, current_app.config["SECRET_KEY"], algorithm="HS256")
+
 def token_obrigatorio(func):
     """
-    Decorator que exige um token JWT válido para acessar a rota.
-    Após validação, armazena o professor_id em request.professor_id.
+    Decorator para proteção de rotas privadas. Extrai o ID e o perfil do usuário do token.
     """
     @wraps(func)
     def verificar_token(*args, **kwargs):
         auth_header = request.headers.get("Authorization")
         if not auth_header:
-            return jsonify({"erro": "Token ausente. Faça login."}), 401
+            return jsonify({"erro": "Token ausente. Faça login para continuar.", "code": "UNAUTHORIZED"}), 401
 
         partes = auth_header.split()
         if len(partes) != 2 or partes[0] != "Bearer":
-            return jsonify({"erro": "Cabeçalho Authorization inválido."}), 401
+            return jsonify({"erro": "Formato de cabeçalho Authorization inválido.", "code": "INVALID_HEADER"}), 401
 
         token = partes[1]
 
@@ -52,18 +44,14 @@ def token_obrigatorio(func):
                 current_app.config["SECRET_KEY"],
                 algorithms=["HS256"]
             )
-            # Extrai o professor_id do token e guarda na requisição
-            professor_id = dados_token.get("professor_id")
-            if not professor_id:
-                return jsonify({"erro": "Token não contém identificador do professor."}), 401
-
-            request.professor_id = professor_id
-            request.usuario_logado = dados_token  # opcional, para outros dados
+            request.usuario_logado = dados_token
+            request.professor_id = dados_token.get("professor_id")
+            request.aluno_id = dados_token.get("aluno_id")
 
         except jwt.ExpiredSignatureError:
-            return jsonify({"erro": "Token expirado. Faça login novamente."}), 401
+            return jsonify({"erro": "Sessão expirada. Faça login novamente.", "code": "TOKEN_EXPIRED"}), 401
         except jwt.InvalidTokenError:
-            return jsonify({"erro": "Token inválido."}), 401
+            return jsonify({"erro": "Token de acesso inválido.", "code": "INVALID_TOKEN"}), 401
 
         return func(*args, **kwargs)
 

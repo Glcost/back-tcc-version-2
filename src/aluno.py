@@ -7,23 +7,75 @@ alunos_bp = Blueprint('alunos', __name__)
 @alunos_bp.route('/login', methods=['POST'])
 def login_aluno():
     try: 
-        dados = request.get_json(silent=True)
+        dados = request.get_json(silent=True) or {}
 
-        if not dados or 'pin_acesso' not in dados or 'email' not in dados:
-            return jsonify({"erro": "Os campos 'pin_acesso' e 'email' são obrigatórios."}), 400
+        # Aceita 'pin' ou 'pin_acesso' para manter compatibilidade com o contrato do frontend
+        pin = dados.get('pin') or dados.get('pin_acesso')
+        email = dados.get('email')
 
-        pin_digitado = str(dados.get('pin_acesso')).strip()
-        email = str(dados.get('email')).strip().lower()
+        if not pin or not email:
+            return jsonify({"erro": "Os campos 'email' e 'pin' são obrigatórios.", "code": "MISSING_FIELDS"}), 400
 
-        busca = supabase.table('alunos').select('*').eq('pin_acesso', pin_digitado).eq('email', email).execute()
+        pin_digitado = str(pin).strip()
+        email_limpo = str(email).strip().lower()
 
-        if len(busca.data) == 0:
-            return jsonify({"erro": "PIN ou email inválido."}), 401
+        busca = supabase.table('alunos').select('*').eq('pin_acesso', pin_digitado).eq('email', email_limpo).execute()
+
+        if not busca.data or len(busca.data) == 0:
+            return jsonify({"erro": "E-mail ou PIN de acesso inválido.", "code": "INVALID_CREDENTIALS"}), 401
             
-        return jsonify({"mensagem": "Login aceito!", "aluno": busca.data[0]}), 200
+        aluno = busca.data[0]
+        
+        # Emite token JWT com perfil de aluno
+        token = gerar_token({"id": aluno['id'], "nome": aluno['nome']}, perfil="aluno")
+
+        return jsonify({
+            "mensagem": "Login efetuado com sucesso!",
+            "token": token,
+            "role": "student",
+            "user": {
+                "id": aluno['id'],
+                "name": aluno['nome'],
+                "email": aluno['email'],
+                "schoolYear": aluno.get('ano_escolar'),
+                "supportLevel": aluno.get('modo_aprendizagem')
+            }
+        }), 200
 
     except Exception as e:
-        return jsonify({"erro": f"Erro no processamento do login: {str(e)}"}), 500
+        return jsonify({"erro": f"Erro interno durante a autenticação do aluno: {str(e)}"}), 500
+
+
+@alunos_bp.route('/me', methods=['GET'])
+@token_obrigatorio
+def obter_aluno_atual():
+    """
+    Retorna os dados do aluno autenticado com base no token JWT.
+    """
+    try:
+        aluno_id = request.aluno_id
+        if not aluno_id:
+            return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
+
+        aluno_res = supabase.table('alunos').select('*').eq('id', aluno_id).single().execute()
+        if not aluno_res.data:
+            return jsonify({"erro": "Estudante não encontrado.", "code": "NOT_FOUND"}), 404
+
+        aluno = aluno_res.data
+        return jsonify({
+            "id": aluno["id"],
+            "name": aluno["nome"],
+            "email": aluno["email"],
+            "schoolYear": aluno.get("ano_escolar"),
+            "supportLevel": aluno.get("modo_aprendizagem"),
+            "xpTotal": aluno.get("xp_total", 0)
+        }), 200
+
+    except Exception as e:
+        return jsonify({"erro": f"Falha ao carregar perfil atual: {str(e)}"}), 500
+
+
+
 
 
 @alunos_bp.route('/perfil/<int:aluno_id>', methods=['GET'])
