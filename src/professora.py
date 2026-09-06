@@ -1,3 +1,5 @@
+import re
+import secrets
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash , check_password_hash
 from validate_docbr import CPF
@@ -8,9 +10,20 @@ cpf_validate = CPF()
 
 professores_bp = Blueprint('professores', __name__)
 
+def verificar_professor(professor_id_rota,professor_id_token,):
+    if (
+        professor_id_rota is None
+        or professor_id_token is None
+    ):
+        return False
 
-def verificar_professor(professor_id_rota, professor_id_token):
-    return int(professor_id_rota) == int(professor_id_token)
+    try:
+        return (
+            int(professor_id_rota)
+            == int(professor_id_token)
+        )
+    except (TypeError, ValueError):
+        return False
 
 def verificar_professor_aluno(aluno_id, professor_id_token):
     res = supabase.table('alunos').select('professor_id').eq('id', aluno_id).execute()
@@ -32,7 +45,8 @@ def cadastro_professor():
         email = str(dados.get('email')).strip().lower()
         nome = str(dados.get('nome')).strip()
         senha = str(dados.get('senha')).strip()
-        cpf_texto = str(dados.get('cpf')).strip()
+        cpf_formatado = str(dados.get("cpf", "")).strip()
+        cpf_texto = re.sub(r"\D","",cpf_formatado,)
         
         
         if not cpf_validate.validate(cpf_texto):
@@ -127,126 +141,403 @@ def lista_alunos(professor_id):
     except Exception as e:
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
 
-@professores_bp.route('/cadastrar-aluno', methods=['POST'])
+
+def gerar_pin_aluno():
+    tentativas_maximas = 20
+
+    for _ in range(tentativas_maximas):
+        pin = f"{secrets.randbelow(10000):04d}"
+
+        resultado = (
+            supabase
+            .table("alunos")
+            .select("id")
+            .eq("pin_acesso", pin)
+            .limit(1)
+            .execute()
+        )
+
+        if not resultado.data:
+            return pin
+
+    raise RuntimeError(
+        "Não foi possível gerar um PIN único."
+    )
+
+
+
+@professores_bp.route("/cadastrar-aluno",methods=["POST"])
 @token_obrigatorio
 def cadastrar_e_avaliar_aluno():
     try:
         dados = request.get_json(silent=True) or {}
-        
-        # Validação dos campos obrigatórios
-        campos_obrigatorios = ['professor_id', 'nome', 'email','cpf_aluno', 'ano_escolar', 'pergunta_a', 'pergunta_b']
-        
-        if not all(campo in dados for campo in campos_obrigatorios):
-            return jsonify({"erro": "Dados insuficientes para cadastro e avaliação."}), 400
-        
-        
-        cpf_aluno = str(dados.get('cpf_aluno')).strip()
-        email = str(dados.get('email')).strip().lower()
 
-        # 2. Validação do CPF do aluno com a biblioteca validate-docbr
+        professor_id = request.professor_id
+
+        if not professor_id:
+            return jsonify({
+                "erro": (
+                    "Acesso permitido apenas para professores."
+                ),
+                "code": "FORBIDDEN",
+            }), 403
+
+        campos_obrigatorios = [
+            "nome",
+            "email",
+            "cpf_aluno",
+            "ano_escolar",
+            "pergunta_a",
+            "pergunta_b",
+        ]
+
+        campos_ausentes = [
+            campo
+            for campo in campos_obrigatorios
+            if not str(dados.get(campo, "")).strip()
+        ]
+
+        if campos_ausentes:
+            return jsonify({
+                "erro": (
+                    "Dados insuficientes para cadastro "
+                    "e avaliação."
+                ),
+                "code": "MISSING_FIELDS",
+                "campos": campos_ausentes,
+            }), 400
+
+        nome = str(
+            dados.get("nome", "")
+        ).strip()
+
+        email = str(
+            dados.get("email", "")
+        ).strip().lower()
+
+        ano_escolar = str(
+            dados.get("ano_escolar", "")
+        ).strip()
+
+        cpf_formatado = str(
+            dados.get("cpf_aluno", "")
+        ).strip()
+
+        cpf_aluno = re.sub(
+            r"\D",
+            "",
+            cpf_formatado,
+        )
+
+        if len(cpf_aluno) != 11:
+            return jsonify({
+                "erro": "O CPF deve possuir 11 dígitos.",
+                "code": "INVALID_CPF_LENGTH",
+            }), 400
+
         if not cpf_validate.validate(cpf_aluno):
-            return jsonify({"erro": "O CPF informado para o aluno é inválido."}), 400
+            return jsonify({
+                "erro": (
+                    "O CPF informado para o aluno "
+                    "é inválido."
+                ),
+                "code": "INVALID_CPF",
+            }), 400
 
-        pergunta_a = dados.get('pergunta_a')
-        pergunta_b = dados.get('pergunta_b')
+        pergunta_a = dados.get("pergunta_a")
+        pergunta_b = dados.get("pergunta_b")
 
-        # Dicionário para conversão direta de nível em modo de aprendizagem
-        modos_map = {
-            1: 'Visual Guiado',
-            2: 'Interativo Visual',
-            3: 'Verbal'
+        respostas_a_validas = {
+            "A1",
+            "A2",
+            "A3",
         }
 
-        # 1. Prioriza o nível ajustado manualmente pela professora no Step 3
-        nivel_manual = dados.get('nivel')
-        if nivel_manual and int(nivel_manual) in modos_map:
-            nivel_calculado = int(nivel_manual)
-            modo_aprendizagem = modos_map[nivel_calculado]
+        respostas_b_validas = {
+            "B1",
+            "B2",
+            "B3",
+        }
+
+        if (
+            pergunta_a not in respostas_a_validas
+            or pergunta_b not in respostas_b_validas
+        ):
+            return jsonify({
+                "erro": (
+                    "As respostas da triagem são inválidas."
+                ),
+                "code": "INVALID_TRIAGE_ANSWERS",
+            }), 400
+
+        if pergunta_a == "A1" or pergunta_b == "B1":
+            nivel_calculado = 1
+            modo_aprendizagem = "Visual Guiado"
+
+        elif (
+            pergunta_a == "A3"
+            and pergunta_b == "B3"
+        ):
+            nivel_calculado = 3
+            modo_aprendizagem = "Verbal"
+
         else:
-            # 2. Caso não venha alteração manual, aplica a Matriz de Decisão
-            if pergunta_a == 'A1' or pergunta_b == 'B1':
-                nivel_calculado = 1
-                modo_aprendizagem = 'Visual Guiado'
-            elif (pergunta_a == 'A2' and pergunta_b in ['B2', 'B3']) or (pergunta_a == 'A3' and pergunta_b == 'B2'):
-                nivel_calculado = 2
-                modo_aprendizagem = 'Interativo Visual'
-            elif pergunta_a == 'A3' and pergunta_b == 'B3':
-                nivel_calculado = 3
-                modo_aprendizagem = 'Verbal'
-            else:
-                return jsonify({"erro": "Combinação de respostas inválida para a matriz de decisão."}), 400
+            nivel_calculado = 2
+            modo_aprendizagem = "Interativo Visual"
 
-        # Persistência na tabela 'alunos'
+        email_existente = (
+            supabase
+            .table("alunos")
+            .select("id")
+            .eq("email", email)
+            .execute()
+        )
+
+        if email_existente.data:
+            return jsonify({
+                "erro": (
+                    "Já existe um aluno cadastrado "
+                    "com este e-mail."
+                ),
+                "code": "EMAIL_ALREADY_EXISTS",
+            }), 409
+
+        cpf_existente = (
+            supabase
+            .table("alunos")
+            .select("id")
+            .eq("cpf_aluno", cpf_aluno)
+            .execute()
+        )
+
+        if cpf_existente.data:
+            return jsonify({
+                "erro": (
+                    "Já existe um aluno cadastrado "
+                    "com este CPF."
+                ),
+                "code": "CPF_ALREADY_EXISTS",
+            }), 409
+
+        pin_acesso = gerar_pin_aluno()
+
         aluno_payload = {
-            "professor_id": dados.get('professor_id'),
-            "nome": dados.get('nome'),
-            "email": dados.get('email'),
-            "ano_escolar": dados.get('ano_escolar'),
-            "cpf_aluno": dados.get('cpf_aluno'),
+            "professor_id": professor_id,
+            "nome": nome,
+            "email": email,
+            "ano_escolar": ano_escolar,
+            "cpf_aluno": cpf_aluno,
             "modo_aprendizagem": modo_aprendizagem,
-            "pin_acesso": dados.get('pin_acesso', '1234')
+            "pin_acesso": pin_acesso,
         }
-        
-        req_aluno = supabase.table('alunos').insert(aluno_payload).execute()
-            
-        aluno_id = req_aluno.data[0]['id']
 
-        # Persistência na tabela 'avaliacao_inicial'
+        aluno_response = (
+            supabase
+            .table("alunos")
+            .insert(aluno_payload)
+            .execute()
+        )
+
+        if not aluno_response.data:
+            return jsonify({
+                "erro": (
+                    "Não foi possível cadastrar o aluno."
+                ),
+                "code": "STUDENT_CREATION_FAILED",
+            }), 500
+
+        aluno_id = aluno_response.data[0]["id"]
+
         avaliacao_payload = {
             "aluno_id": aluno_id,
-            "nivel_comunicacao": pergunta_a, 
+            "nivel_comunicacao": pergunta_a,
             "forma_comunicacao": pergunta_b,
-            "suporte_audio": dados.get('suporte_audio', False),
-            "resultado_modo": modo_aprendizagem
+            "suporte_audio": bool(
+                dados.get("suporte_audio", False)
+            ),
+            "resultado_modo": modo_aprendizagem,
         }
-        
-        req_avaliacao = supabase.table('avaliacao_inicial').insert(avaliacao_payload).execute()
-        if not req_avaliacao.data:
-            return jsonify({"erro": "Aluno cadastrado, mas falhou ao salvar o relatório da avaliação."}), 500
+
+        avaliacao_response = (
+            supabase
+            .table("avaliacao_inicial")
+            .insert(avaliacao_payload)
+            .execute()
+        )
+
+        if not avaliacao_response.data:
+            return jsonify({
+                "erro": (
+                    "O aluno foi cadastrado, mas não foi "
+                    "possível salvar a avaliação inicial."
+                ),
+                "code": "ASSESSMENT_CREATION_FAILED",
+            }), 500
 
         return jsonify({
-            "mensagem": "Aluno cadastrado e classificado com sucesso!",
+            "mensagem": (
+                "Aluno cadastrado e classificado "
+                "com sucesso."
+            ),
             "aluno_id": aluno_id,
+            "pin": pin_acesso,
             "nivel_identificado": nivel_calculado,
-            "modo_definido": modo_aprendizagem
+            "modo_definido": modo_aprendizagem,
         }), 201
 
-    except Exception as e:
-        return jsonify({"erro": f"Erro analítico no servidor: {str(e)}"}), 500
+    except Exception as error:
+        return jsonify({
+            "erro": (
+                "Erro analítico no servidor: "
+                f"{str(error)}"
+            ),
+            "code": "STUDENT_CREATION_ERROR",
+        }), 500
     
 
 @professores_bp.route('/alunos/<int:id>', methods=['PUT'])
 @token_obrigatorio
-def editar_aluno(id):
-    if not verificar_professor_aluno(id, request.professor_id):
-      return jsonify({"erro": "Acesso não autorizado a este aluno."}), 403
+def editar_aluno(aluno_id):
     try:
-        dados = request.get_json()
-        if not dados:
-            return jsonify({"erro": "Nenhum dado fornecido para atualização."}), 400
+        if not verificar_professor_aluno(
+            aluno_id,
+            request.professor_id,
+        ):
+            return jsonify({
+                "erro": (
+                    "Acesso não autorizado a este aluno."
+                ),
+                "code": "FORBIDDEN",
+            }), 403
 
-        # Criamos um mapa/dicionário vazio
+        dados = request.get_json(silent=True) or {}
+
+        if not dados:
+            return jsonify({
+                "erro": (
+                    "Nenhum dado foi fornecido "
+                    "para atualização."
+                ),
+                "code": "EMPTY_REQUEST",
+            }), 400
+
+        modos_por_nivel = {
+            1: "Visual Guiado",
+            2: "Interativo Visual",
+            3: "Verbal",
+        }
+
         campos_para_atualizar = {}
 
-        # Só adicionamos ao mapa se o campo veio na requisição
-        if 'modo_aprendizagem' in dados:
-            campos_para_atualizar['modo_aprendizagem'] = dados.get('modo_aprendizagem')
-        if 'nome' in dados:
-            campos_para_atualizar['nome'] = dados.get('nome')
-        if 'ano_escolar' in dados:
-            campos_para_atualizar['ano_escolar'] = dados.get('ano_escolar')
+        if "nome" in dados:
+            nome = str(
+                dados.get("nome", "")
+            ).strip()
 
-        # Se o usuário mandou um JSON mas sem nenhum dos campos válidos
+            if not nome:
+                return jsonify({
+                    "erro": (
+                        "O nome do aluno não pode "
+                        "ficar vazio."
+                    ),
+                    "code": "INVALID_NAME",
+                }), 400
+
+            campos_para_atualizar["nome"] = nome
+
+        if "ano_escolar" in dados:
+            ano_escolar = str(
+                dados.get("ano_escolar", "")
+            ).strip()
+
+            if not ano_escolar:
+                return jsonify({
+                    "erro": (
+                        "O ano escolar não pode "
+                        "ficar vazio."
+                    ),
+                    "code": "INVALID_SCHOOL_YEAR",
+                }), 400
+
+            campos_para_atualizar[
+                "ano_escolar"
+            ] = ano_escolar
+
+        if "nivel" in dados:
+            try:
+                nivel = int(dados.get("nivel"))
+            except (TypeError, ValueError):
+                return jsonify({
+                    "erro": (
+                        "O nível informado é inválido."
+                    ),
+                    "code": "INVALID_SUPPORT_LEVEL",
+                }), 400
+
+            if nivel not in modos_por_nivel:
+                return jsonify({
+                    "erro": (
+                        "O nível deve ser 1, 2 ou 3."
+                    ),
+                    "code": "INVALID_SUPPORT_LEVEL",
+                }), 400
+
+            campos_para_atualizar[
+                "modo_aprendizagem"
+            ] = modos_por_nivel[nivel]
+
         if not campos_para_atualizar:
-            return jsonify({"erro": "Nenhum campo válido para atualização foi enviado."}), 400
+            return jsonify({
+                "erro": (
+                    "Nenhum campo válido foi enviado "
+                    "para atualização."
+                ),
+                "code": "NO_VALID_FIELDS",
+            }), 400
 
-        # Mandamos atualizar APENAS os campos que foram alterados
-        busca = supabase.table('alunos').update(campos_para_atualizar).eq('id', id).execute()
-        
-        return jsonify({"mensagem": "Perfil do aluno atualizado!", "aluno": busca.data[0]}), 200
+        atualizacao = (
+            supabase
+            .table("alunos")
+            .update(campos_para_atualizar)
+            .eq("id", aluno_id)
+            .execute()
+        )
 
-    except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+        if not atualizacao.data:
+            return jsonify({
+                "erro": (
+                    "Não foi possível atualizar o aluno."
+                ),
+                "code": "STUDENT_UPDATE_FAILED",
+            }), 500
+
+        aluno = atualizacao.data[0]
+
+        return jsonify({
+            "mensagem": (
+                "Dados do aluno atualizados "
+                "com sucesso."
+            ),
+            "aluno": {
+                "id": aluno.get("id"),
+                "nome": aluno.get("nome"),
+                "ano_escolar": aluno.get(
+                    "ano_escolar"
+                ),
+                "modo_aprendizagem": aluno.get(
+                    "modo_aprendizagem"
+                ),
+            },
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "erro": (
+                "Erro ao atualizar o aluno: "
+                f"{str(error)}"
+            ),
+            "code": "STUDENT_UPDATE_ERROR",
+        }), 500
 
 
 
