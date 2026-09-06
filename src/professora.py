@@ -36,7 +36,10 @@ def cadastro_professor():
         
         
         if not cpf_validate.validate(cpf_texto):
-            return jsonify({'erro': 'CPF informado é inválido'})
+            return jsonify({
+            "erro": "CPF informado é inválido",
+            "code": "INVALID_CPF",
+            }), 400
 
         # 2. Verificação de e-mail duplicado
         busca = supabase.table('professores').select('id').eq('email', email).execute()
