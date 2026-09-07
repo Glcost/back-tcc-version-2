@@ -54,6 +54,26 @@ def cadastro_professor():
         senha = str(dados.get('senha')).strip()
         cpf_formatado = str(dados.get("cpf", "")).strip()
         cpf_texto = re.sub(r"\D","",cpf_formatado,)
+
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            return jsonify({
+                "erro": "Informe um e-mail válido.",
+                "code": "INVALID_EMAIL",
+            }), 400
+
+        if (
+            len(senha) < 8
+            or not re.search(r"[A-Z]", senha)
+            or not re.search(r"[a-z]", senha)
+            or not re.search(r"\d", senha)
+        ):
+            return jsonify({
+                "erro": (
+                    "A senha deve ter pelo menos 8 caracteres, "
+                    "uma letra maiúscula, uma minúscula e um número."
+                ),
+                "code": "WEAK_PASSWORD",
+            }), 400
         
         
         if not cpf_validate.validate(cpf_texto):
@@ -74,19 +94,38 @@ def cadastro_professor():
             'nome': nome,
             'email': email,
             'senha': senha_hashed,
-            'cpf': cpf_texto
+            'cpf': cpf_texto,
+            'email_verificado_em': None,
         }).execute()
 
         if not req.data:
             return jsonify({'erro': 'Falha ao registrar professor no banco de dados.'}), 500
         
+        professor_criado = req.data[0]
+        email_enviado = True
+
+        try:
+            _create_and_send_email_verification(professor_criado)
+        except Exception as error:
+            email_enviado = False
+            print(
+                "Falha no envio da verificação de e-mail: "
+                f"{type(error).__name__}"
+            )
+
         return jsonify({
-            'mensagem': 'Professor cadastrado com sucesso!',
+            'mensagem': (
+                'Cadastro realizado. Digite o código enviado ao seu e-mail.'
+                if email_enviado
+                else 'Cadastro realizado, mas o código não pôde ser enviado. Solicite o reenvio.'
+            ),
+            'email_verificado': False,
+            'email_enviado': email_enviado,
             'professor': {
-                'id': req.data[0]['id'],
-                'nome': req.data[0]['nome'],
-                'email': req.data[0]['email'],
-                'cpf': req.data[0]['cpf']
+                'id': professor_criado['id'],
+                'nome': professor_criado['nome'],
+                'email': professor_criado['email'],
+                'cpf': professor_criado['cpf']
             }
         }), 201
         
@@ -120,6 +159,12 @@ def login_professor():
     
     if not senha_valida:
         return jsonify({"erro": "E-mail ou senha incorretos."}), 401
+
+    if not professor.get("email_verificado_em"):
+        return jsonify({
+            "erro": "Confirme seu e-mail antes de entrar.",
+            "code": "EMAIL_NOT_VERIFIED",
+        }), 403
 
     # 3. Gera o token JWT e envia a resposta
     token = gerar_token({"id": professor['id'], "nome": professor['nome']})
@@ -967,7 +1012,7 @@ def _hash_recovery_code(professor_id, code, pepper):
 def _find_professor_by_email(email):
     result = (
         supabase.table("professores")
-        .select("id, nome, email")
+        .select("id, nome, email, email_verificado_em")
         .eq("email", email)
         .limit(1)
         .execute()
@@ -1145,3 +1190,165 @@ def redefinir_senha_professor():
         return jsonify({"mensagem": "Senha redefinida com sucesso."}), 200
     except Exception:
         return jsonify({"erro": "Não foi possível redefinir a senha.", "code": "PASSWORD_RESET_ERROR"}), 500
+
+
+# ==========================================================
+# CONFIRMAÇÃO DE E-MAIL DO PROFESSOR
+# ==========================================================
+EMAIL_CODE_MINUTES = 10
+EMAIL_CODE_MAX_ATTEMPTS = 5
+EMAIL_CODE_RESEND_SECONDS = 60
+
+
+def _hash_email_verification_code(professor_id, code, pepper):
+    message = f"email:{int(professor_id)}:{str(code)}".encode("utf-8")
+    return hmac.new(
+        pepper.encode("utf-8"),
+        message,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _latest_email_verification(professor_id):
+    result = (
+        supabase.table("verificacoes_email_professor")
+        .select("id, professor_id, codigo_hash, expira_em, tentativas, confirmado_em, criado_em")
+        .eq("professor_id", professor_id)
+        .is_("confirmado_em", "null")
+        .order("criado_em", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def _send_email_verification(professor, code):
+    api_key, from_email, _ = _recovery_configuration()
+    resend.api_key = api_key
+    safe_name = html.escape(str(professor.get("nome") or "Professor"))
+    safe_code = html.escape(str(code))
+
+    resend.Emails.send({
+        "from": from_email,
+        "to": [professor["email"]],
+        "subject": "Confirme seu e-mail no ROAR",
+        "html": f"""
+            <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#172b3f">
+                <h1 style="color:#1f6ce3">Confirmação de e-mail</h1>
+                <p>Olá, {safe_name}.</p>
+                <p>Use o código abaixo para confirmar seu cadastro no ROAR:</p>
+                <p style="font-size:32px;font-weight:700;letter-spacing:8px">{safe_code}</p>
+                <p>O código expira em {EMAIL_CODE_MINUTES} minutos.</p>
+                <p>Se você não realizou este cadastro, ignore esta mensagem.</p>
+            </div>
+        """,
+    })
+
+
+def _create_and_send_email_verification(professor):
+    now = datetime.utcnow()
+    supabase.table("verificacoes_email_professor").update({
+        "confirmado_em": now.isoformat(),
+    }).eq("professor_id", professor["id"]).is_("confirmado_em", "null").execute()
+
+    code = f"{secrets.randbelow(1000000):06d}"
+    _, _, pepper = _recovery_configuration()
+    insertion = supabase.table("verificacoes_email_professor").insert({
+        "professor_id": professor["id"],
+        "codigo_hash": _hash_email_verification_code(professor["id"], code, pepper),
+        "expira_em": (now + timedelta(minutes=EMAIL_CODE_MINUTES)).isoformat(),
+    }).execute()
+
+    try:
+        _send_email_verification(professor, code)
+    except Exception:
+        if insertion.data:
+            supabase.table("verificacoes_email_professor").delete().eq(
+                "id", insertion.data[0]["id"]
+            ).execute()
+        raise
+
+
+def _validate_email_verification_code(professor, code):
+    verification = _latest_email_verification(professor["id"])
+    if not verification:
+        return None, "Código inválido ou expirado."
+
+    expires_at = _parse_database_datetime(verification.get("expira_em"))
+    attempts = int(verification.get("tentativas") or 0)
+    if not expires_at or datetime.utcnow() >= expires_at:
+        return None, "Código inválido ou expirado."
+    if attempts >= EMAIL_CODE_MAX_ATTEMPTS:
+        return None, "O limite de tentativas foi atingido. Solicite outro código."
+
+    _, _, pepper = _recovery_configuration()
+    received_hash = _hash_email_verification_code(professor["id"], code, pepper)
+    valid = hmac.compare_digest(received_hash, verification["codigo_hash"])
+
+    if not valid:
+        supabase.table("verificacoes_email_professor").update({
+            "tentativas": attempts + 1,
+        }).eq("id", verification["id"]).execute()
+        return None, "Código inválido ou expirado."
+
+    return verification, None
+
+
+@professores_bp.route("/email/confirmar", methods=["POST"])
+def confirmar_email_professor():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_recovery_email(data.get("email"))
+    code = re.sub(r"\D", "", str(data.get("codigo") or ""))
+
+    if not email or len(code) != 6:
+        return jsonify({"erro": "Código inválido ou expirado.", "code": "INVALID_EMAIL_CODE"}), 400
+
+    try:
+        professor = _find_professor_by_email(email)
+        if not professor:
+            return jsonify({"erro": "Código inválido ou expirado.", "code": "INVALID_EMAIL_CODE"}), 400
+        if professor.get("email_verificado_em"):
+            return jsonify({"mensagem": "Este e-mail já foi confirmado."}), 200
+
+        verification, error = _validate_email_verification_code(professor, code)
+        if not verification:
+            return jsonify({"erro": error, "code": "INVALID_EMAIL_CODE"}), 400
+
+        now = datetime.utcnow().isoformat()
+        supabase.table("professores").update({
+            "email_verificado_em": now,
+        }).eq("id", professor["id"]).execute()
+        supabase.table("verificacoes_email_professor").update({
+            "confirmado_em": now,
+        }).eq("id", verification["id"]).execute()
+
+        return jsonify({"mensagem": "E-mail confirmado com sucesso."}), 200
+    except Exception:
+        return jsonify({"erro": "Não foi possível confirmar o e-mail.", "code": "EMAIL_CONFIRMATION_ERROR"}), 500
+
+
+@professores_bp.route("/email/reenviar-codigo", methods=["POST"])
+def reenviar_codigo_email_professor():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_recovery_email(data.get("email"))
+    generic_message = "Se o cadastro estiver pendente, enviaremos um novo código."
+
+    if not email:
+        return jsonify({"erro": "Informe um e-mail válido.", "code": "INVALID_EMAIL"}), 400
+
+    try:
+        professor = _find_professor_by_email(email)
+        if not professor or professor.get("email_verificado_em"):
+            return jsonify({"mensagem": generic_message}), 200
+
+        latest = _latest_email_verification(professor["id"])
+        if latest:
+            created_at = _parse_database_datetime(latest.get("criado_em"))
+            if created_at and (datetime.utcnow() - created_at).total_seconds() < EMAIL_CODE_RESEND_SECONDS:
+                return jsonify({"mensagem": generic_message}), 200
+
+        _create_and_send_email_verification(professor)
+        return jsonify({"mensagem": generic_message}), 200
+    except Exception as error:
+        print(f"Falha ao reenviar confirmação: {type(error).__name__}")
+        return jsonify({"mensagem": generic_message}), 200
