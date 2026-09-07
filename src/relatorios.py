@@ -1045,6 +1045,8 @@ def relatorio_modulo(modulo_id):
                 "total_atividades": len(
                     atividades
                 ),
+                "alunos_participantes_modulo": 0,
+                "alunos_concluiram_modulo": 0,
                 "atividades": [],
                 "atividades_mais_dificeis": [],
             }), 200
@@ -1077,11 +1079,25 @@ def relatorio_modulo(modulo_id):
         historico_por_atividade = defaultdict(
             list
         )
+        atividades_concluidas_por_aluno = (
+            defaultdict(set)
+        )
+        alunos_participantes_modulo = set()
 
         for registro in historico:
             historico_por_atividade[
                 registro["atividade_id"]
             ].append(registro)
+            alunos_participantes_modulo.add(
+                registro["aluno_id"]
+            )
+
+            if registro.get("concluido"):
+                atividades_concluidas_por_aluno[
+                    registro["aluno_id"]
+                ].add(
+                    registro["atividade_id"]
+                )
 
         detalhes = []
 
@@ -1129,6 +1145,17 @@ def relatorio_modulo(modulo_id):
             "modulo_id": modulo_id,
             "total_atividades": len(
                 atividades
+            ),
+            "alunos_participantes_modulo": len(
+                alunos_participantes_modulo
+            ),
+            "alunos_concluiram_modulo": sum(
+                1
+                for atividades_concluidas
+                in atividades_concluidas_por_aluno.values()
+                if set(ids_atividades).issubset(
+                    atividades_concluidas
+                )
             ),
             "atividades": detalhes,
             "atividades_mais_dificeis":
