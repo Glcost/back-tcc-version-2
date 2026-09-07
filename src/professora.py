@@ -1,5 +1,12 @@
 import re
 import secrets
+import hashlib
+import hmac
+import html
+import os
+from datetime import datetime, timedelta
+
+import resend
 from flask import Blueprint, request, jsonify
 from werkzeug.security import generate_password_hash , check_password_hash
 from validate_docbr import CPF
@@ -915,3 +922,226 @@ def obter_perfil_aluno(aluno_id):
         return jsonify(busca.data[0]), 200
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
+
+
+# ==========================================================
+# RECUPERAÇÃO DE SENHA DO PROFESSOR
+# ==========================================================
+RECOVERY_CODE_MINUTES = 10
+RECOVERY_MAX_ATTEMPTS = 5
+RECOVERY_REQUEST_INTERVAL_SECONDS = 60
+GENERIC_RECOVERY_MESSAGE = (
+    "Se o e-mail estiver cadastrado, enviaremos um código de recuperação."
+)
+
+
+def _recovery_configuration():
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    from_email = os.getenv("RESEND_FROM_EMAIL", "").strip()
+    pepper = os.getenv("PASSWORD_RESET_PEPPER", "").strip()
+
+    if not api_key or not from_email or not pepper:
+        raise RuntimeError(
+            "As variáveis de recuperação de senha não foram configuradas."
+        )
+
+    return api_key, from_email, pepper
+
+
+def _normalize_recovery_email(value):
+    email = str(value or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return None
+    return email
+
+
+def _hash_recovery_code(professor_id, code, pepper):
+    message = f"{int(professor_id)}:{str(code)}".encode("utf-8")
+    return hmac.new(
+        pepper.encode("utf-8"),
+        message,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _find_professor_by_email(email):
+    result = (
+        supabase.table("professores")
+        .select("id, nome, email")
+        .eq("email", email)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def _latest_active_recovery(professor_id):
+    result = (
+        supabase.table("recuperacoes_senha_professor")
+        .select("id, professor_id, codigo_hash, expira_em, tentativas, utilizado_em, criado_em")
+        .eq("professor_id", professor_id)
+        .is_("utilizado_em", "null")
+        .order("criado_em", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def _parse_database_datetime(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return None
+
+
+def _validate_recovery_code(professor, code, count_attempt=True):
+    recovery = _latest_active_recovery(professor["id"])
+    if not recovery:
+        return None, "Código inválido ou expirado."
+
+    expires_at = _parse_database_datetime(recovery.get("expira_em"))
+    attempts = int(recovery.get("tentativas") or 0)
+
+    if not expires_at or datetime.utcnow() >= expires_at:
+        return None, "Código inválido ou expirado."
+
+    if attempts >= RECOVERY_MAX_ATTEMPTS:
+        return None, "O limite de tentativas foi atingido. Solicite outro código."
+
+    _, _, pepper = _recovery_configuration()
+    received_hash = _hash_recovery_code(professor["id"], code, pepper)
+    valid = hmac.compare_digest(received_hash, recovery["codigo_hash"])
+
+    if not valid and count_attempt:
+        supabase.table("recuperacoes_senha_professor").update({
+            "tentativas": attempts + 1,
+        }).eq("id", recovery["id"]).execute()
+
+    if not valid:
+        return None, "Código inválido ou expirado."
+
+    return recovery, None
+
+
+def _send_recovery_email(professor, code):
+    api_key, from_email, _ = _recovery_configuration()
+    resend.api_key = api_key
+    safe_name = html.escape(str(professor.get("nome") or "Professor"))
+    safe_code = html.escape(str(code))
+
+    resend.Emails.send({
+        "from": from_email,
+        "to": [professor["email"]],
+        "subject": "Código para redefinir sua senha no ROAR",
+        "html": f"""
+            <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#172b3f">
+                <h1 style="color:#1f6ce3">Recuperação de senha</h1>
+                <p>Olá, {safe_name}.</p>
+                <p>Use o código abaixo para redefinir sua senha no ROAR:</p>
+                <p style="font-size:32px;font-weight:700;letter-spacing:8px">{safe_code}</p>
+                <p>Ele expira em {RECOVERY_CODE_MINUTES} minutos.</p>
+                <p>Se você não solicitou esta alteração, ignore esta mensagem.</p>
+            </div>
+        """,
+    })
+
+
+@professores_bp.route("/senha/solicitar-recuperacao", methods=["POST"])
+def solicitar_recuperacao_senha():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_recovery_email(data.get("email"))
+
+    if not email:
+        return jsonify({"erro": "Informe um e-mail válido.", "code": "INVALID_EMAIL"}), 400
+
+    try:
+        professor = _find_professor_by_email(email)
+        if not professor:
+            return jsonify({"mensagem": GENERIC_RECOVERY_MESSAGE}), 200
+
+        latest = _latest_active_recovery(professor["id"])
+        if latest:
+            created_at = _parse_database_datetime(latest.get("criado_em"))
+            if created_at and (datetime.utcnow() - created_at).total_seconds() < RECOVERY_REQUEST_INTERVAL_SECONDS:
+                return jsonify({"mensagem": GENERIC_RECOVERY_MESSAGE}), 200
+
+        now = datetime.utcnow()
+        supabase.table("recuperacoes_senha_professor").update({
+            "utilizado_em": now.isoformat(),
+        }).eq("professor_id", professor["id"]).is_("utilizado_em", "null").execute()
+
+        code = f"{secrets.randbelow(1000000):06d}"
+        _, _, pepper = _recovery_configuration()
+        insertion = supabase.table("recuperacoes_senha_professor").insert({
+            "professor_id": professor["id"],
+            "codigo_hash": _hash_recovery_code(professor["id"], code, pepper),
+            "expira_em": (now + timedelta(minutes=RECOVERY_CODE_MINUTES)).isoformat(),
+        }).execute()
+
+        try:
+            _send_recovery_email(professor, code)
+        except Exception:
+            if insertion.data:
+                supabase.table("recuperacoes_senha_professor").delete().eq("id", insertion.data[0]["id"]).execute()
+            raise
+
+        return jsonify({"mensagem": GENERIC_RECOVERY_MESSAGE}), 200
+    except Exception as error:
+        print(f"Falha ao solicitar recuperação: {type(error).__name__}")
+        return jsonify({"mensagem": GENERIC_RECOVERY_MESSAGE}), 200
+
+
+@professores_bp.route("/senha/validar-codigo", methods=["POST"])
+def validar_codigo_recuperacao():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_recovery_email(data.get("email"))
+    code = re.sub(r"\D", "", str(data.get("codigo") or ""))
+
+    if not email or len(code) != 6:
+        return jsonify({"erro": "Código inválido ou expirado.", "code": "INVALID_RECOVERY_CODE"}), 400
+
+    try:
+        professor = _find_professor_by_email(email)
+        recovery, error = _validate_recovery_code(professor, code) if professor else (None, None)
+        if not recovery:
+            return jsonify({"erro": error or "Código inválido ou expirado.", "code": "INVALID_RECOVERY_CODE"}), 400
+        return jsonify({"mensagem": "Código validado com sucesso."}), 200
+    except Exception:
+        return jsonify({"erro": "Não foi possível validar o código.", "code": "RECOVERY_VALIDATION_ERROR"}), 500
+
+
+@professores_bp.route("/senha/redefinir", methods=["POST"])
+def redefinir_senha_professor():
+    data = request.get_json(silent=True) or {}
+    email = _normalize_recovery_email(data.get("email"))
+    code = re.sub(r"\D", "", str(data.get("codigo") or ""))
+    password = str(data.get("nova_senha") or "")
+    confirmation = str(data.get("confirmacao_senha") or "")
+
+    if not email or len(code) != 6:
+        return jsonify({"erro": "Código inválido ou expirado.", "code": "INVALID_RECOVERY_CODE"}), 400
+    if password != confirmation:
+        return jsonify({"erro": "As senhas não coincidem.", "code": "PASSWORD_MISMATCH"}), 400
+    if len(password) < 8 or not re.search(r"[A-Z]", password) or not re.search(r"[a-z]", password) or not re.search(r"\d", password):
+        return jsonify({"erro": "A senha deve ter pelo menos 8 caracteres, uma letra maiúscula, uma minúscula e um número.", "code": "WEAK_PASSWORD"}), 400
+
+    try:
+        professor = _find_professor_by_email(email)
+        recovery, error = _validate_recovery_code(professor, code) if professor else (None, None)
+        if not recovery:
+            return jsonify({"erro": error or "Código inválido ou expirado.", "code": "INVALID_RECOVERY_CODE"}), 400
+
+        supabase.table("professores").update({
+            "senha": generate_password_hash(password),
+        }).eq("id", professor["id"]).execute()
+
+        supabase.table("recuperacoes_senha_professor").update({
+            "utilizado_em": datetime.utcnow().isoformat(),
+        }).eq("id", recovery["id"]).execute()
+
+        return jsonify({"mensagem": "Senha redefinida com sucesso."}), 200
+    except Exception:
+        return jsonify({"erro": "Não foi possível redefinir a senha.", "code": "PASSWORD_RESET_ERROR"}), 500
