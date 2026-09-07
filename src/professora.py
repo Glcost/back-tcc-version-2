@@ -570,14 +570,14 @@ def cadastrar_e_avaliar_aluno():
                 "code": "INVALID_CPF_LENGTH",
             }), 400
 
-        if not cpf_validate.validate(cpf_aluno):
-            return jsonify({
-                "erro": (
-                    "O CPF informado para o aluno "
-                    "é inválido."
-                ),
-                "code": "INVALID_CPF",
-            }), 400
+        # if not cpf_validate.validate(cpf_aluno):
+        #     return jsonify({
+        #         "erro": (
+        #             "O CPF informado para o aluno "
+        #             "é inválido."
+        #         ),
+        #         "code": "INVALID_CPF",
+        #     }), 400
 
         pergunta_a = dados.get("pergunta_a")
         pergunta_b = dados.get("pergunta_b")
