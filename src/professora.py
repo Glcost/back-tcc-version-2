@@ -127,6 +127,289 @@ def login_professor():
         }
     }), 200
 
+
+
+@professores_bp.route(
+    "/perfil/<int:professor_id>",
+    methods=["GET"],
+)
+@token_obrigatorio
+def obter_perfil_professor(professor_id):
+    if not verificar_professor(
+        professor_id,
+        request.professor_id,
+    ):
+        return jsonify({
+            "erro": "Acesso não autorizado a este perfil.",
+            "code": "FORBIDDEN",
+        }), 403
+
+    try:
+        resultado = (
+            supabase
+            .table("professores")
+            .select(
+                "id, nome, email, cpf, criado_em"
+            )
+            .eq("id", professor_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not resultado.data:
+            return jsonify({
+                "erro": "Professor não encontrado.",
+                "code": "TEACHER_NOT_FOUND",
+            }), 404
+
+        professor = resultado.data[0]
+
+        return jsonify({
+            "professor": {
+                "id": professor.get("id"),
+                "nome": professor.get("nome"),
+                "email": professor.get("email"),
+                "cpf": str(
+                    professor.get("cpf") or ""
+                ),
+                "criado_em": professor.get(
+                    "criado_em"
+                ),
+            },
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "erro": (
+                "Erro ao consultar o perfil: "
+                f"{str(error)}"
+            ),
+            "code": "TEACHER_PROFILE_ERROR",
+        }), 500
+
+
+@professores_bp.route(
+    "/perfil/<int:professor_id>",
+    methods=["PUT"],
+)
+@token_obrigatorio
+def atualizar_perfil_professor(professor_id):
+    if not verificar_professor(
+        professor_id,
+        request.professor_id,
+    ):
+        return jsonify({
+            "erro": "Acesso não autorizado a este perfil.",
+            "code": "FORBIDDEN",
+        }), 403
+
+    try:
+        dados = request.get_json(silent=True) or {}
+
+        if not dados:
+            return jsonify({
+                "erro": "Nenhum dado foi enviado.",
+                "code": "EMPTY_REQUEST",
+            }), 400
+
+        campos_permitidos = {
+            "nome",
+            "email",
+            "cpf",
+        }
+
+        campos_desconhecidos = (
+            set(dados.keys()) -
+            campos_permitidos
+        )
+
+        if campos_desconhecidos:
+            return jsonify({
+                "erro": (
+                    "Foram enviados campos que não "
+                    "podem ser alterados."
+                ),
+                "code": "INVALID_FIELDS",
+                "campos": sorted(
+                    campos_desconhecidos
+                ),
+            }), 400
+
+        atualizacao = {}
+
+        if "nome" in dados:
+            nome = str(
+                dados.get("nome") or ""
+            ).strip()
+
+            if len(nome) < 3:
+                return jsonify({
+                    "erro": (
+                        "O nome deve possuir pelo "
+                        "menos 3 caracteres."
+                    ),
+                    "code": "INVALID_NAME",
+                }), 400
+
+            if len(nome) > 150:
+                return jsonify({
+                    "erro": (
+                        "O nome deve possuir no "
+                        "máximo 150 caracteres."
+                    ),
+                    "code": "INVALID_NAME",
+                }), 400
+
+            atualizacao["nome"] = nome
+
+        if "email" in dados:
+            email = str(
+                dados.get("email") or ""
+            ).strip().lower()
+
+            formato_email = (
+                r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+            )
+
+            if not re.match(
+                formato_email,
+                email,
+            ):
+                return jsonify({
+                    "erro": (
+                        "Informe um endereço de "
+                        "e-mail válido."
+                    ),
+                    "code": "INVALID_EMAIL",
+                }), 400
+
+            email_existente = (
+                supabase
+                .table("professores")
+                .select("id")
+                .eq("email", email)
+                .neq("id", professor_id)
+                .limit(1)
+                .execute()
+            )
+
+            if email_existente.data:
+                return jsonify({
+                    "erro": (
+                        "Este e-mail já está sendo "
+                        "utilizado."
+                    ),
+                    "code": "EMAIL_ALREADY_EXISTS",
+                }), 409
+
+            atualizacao["email"] = email
+
+        if "cpf" in dados:
+            cpf_formatado = str(
+                dados.get("cpf") or ""
+            ).strip()
+
+            cpf = re.sub(
+                r"\D",
+                "",
+                cpf_formatado,
+            )
+
+            if len(cpf) != 11:
+                return jsonify({
+                    "erro": (
+                        "O CPF deve possuir "
+                        "11 números."
+                    ),
+                    "code": "INVALID_CPF",
+                }), 400
+
+            if not cpf_validate.validate(cpf):
+                return jsonify({
+                    "erro": "O CPF informado é inválido.",
+                    "code": "INVALID_CPF",
+                }), 400
+
+            cpf_existente = (
+                supabase
+                .table("professores")
+                .select("id")
+                .eq("cpf", cpf)
+                .neq("id", professor_id)
+                .limit(1)
+                .execute()
+            )
+
+            if cpf_existente.data:
+                return jsonify({
+                    "erro": (
+                        "Este CPF já está sendo "
+                        "utilizado."
+                    ),
+                    "code": "CPF_ALREADY_EXISTS",
+                }), 409
+
+            atualizacao["cpf"] = cpf
+
+        if not atualizacao:
+            return jsonify({
+                "erro": (
+                    "Nenhum campo válido foi "
+                    "informado para atualização."
+                ),
+                "code": "NO_VALID_FIELDS",
+            }), 400
+
+        resultado = (
+            supabase
+            .table("professores")
+            .update(atualizacao)
+            .eq("id", professor_id)
+            .execute()
+        )
+
+        if not resultado.data:
+            return jsonify({
+                "erro": (
+                    "Não foi possível atualizar "
+                    "o perfil."
+                ),
+                "code": "PROFILE_UPDATE_FAILED",
+            }), 500
+
+        professor = resultado.data[0]
+
+        return jsonify({
+            "mensagem": (
+                "Perfil atualizado com sucesso."
+            ),
+            "professor": {
+                "id": professor.get("id"),
+                "nome": professor.get("nome"),
+                "email": professor.get("email"),
+                "cpf": str(
+                    professor.get("cpf") or ""
+                ),
+                "criado_em": professor.get(
+                    "criado_em"
+                ),
+            },
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "erro": (
+                "Erro ao atualizar o perfil: "
+                f"{str(error)}"
+            ),
+            "code": "TEACHER_PROFILE_UPDATE_ERROR",
+        }), 500
+
+
+
+
+
+
 #Lista os alunos do professor
 @professores_bp.route('/aluno/professor/<int:professor_id>', methods=['GET'])
 @token_obrigatorio
