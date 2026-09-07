@@ -607,18 +607,18 @@ def cadastrar_e_avaliar_aluno():
 
         if pergunta_a == "A1" or pergunta_b == "B1":
             nivel_calculado = 1
-            modo_aprendizagem = "Visual Guiado"
+            modo_aprendizagem = "Nível 1 - Suporte Visual Puro"
 
         elif (
             pergunta_a == "A3"
             and pergunta_b == "B3"
         ):
             nivel_calculado = 3
-            modo_aprendizagem = "Verbal"
+            modo_aprendizagem = "Nível 3 - Autonomia Contextual"
 
         else:
             nivel_calculado = 2
-            modo_aprendizagem = "Interativo Visual"
+            modo_aprendizagem = "Nível 2 - Aprendiz Guiado"
 
         email_existente = (
             supabase
@@ -757,9 +757,9 @@ def editar_aluno(aluno_id):
             }), 400
 
         modos_por_nivel = {
-            1: "Visual Guiado",
-            2: "Interativo Visual",
-            3: "Verbal",
+            1: "Nível 1 - Suporte Visual Puro",
+            2: "Nível 2 - Aprendiz Guiado",
+            3: "Nível 3 - Autonomia Contextual",
         }
 
         campos_para_atualizar = {}
