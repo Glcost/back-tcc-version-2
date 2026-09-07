@@ -148,7 +148,7 @@ def calcular_xp(quantidade_erros):
 @token_obrigatorio
 def listar_modulos():
     try:
-        resultado = (
+        modulos_resultado = (
             supabase
             .table("modulos")
             .select("id, nome, ativo")
@@ -156,8 +156,77 @@ def listar_modulos():
             .order("id")
             .execute()
         )
+        modulos = modulos_resultado.data or []
+        aluno_id = getattr(request, "aluno_id", None)
 
-        return jsonify(resultado.data or []), 200
+        if not aluno_id:
+            return jsonify(modulos), 200
+
+        atividades_resultado = (
+            supabase
+            .table("atividades")
+            .select("id, modulo_id, ordem_sequencia")
+            .order("ordem_sequencia")
+            .execute()
+        )
+        atividades = atividades_resultado.data or []
+        ids_atividades = [atividade["id"] for atividade in atividades]
+        concluidas = set()
+
+        if ids_atividades:
+            historico_resultado = (
+                supabase
+                .table("historico_desempenho")
+                .select("atividade_id")
+                .eq("aluno_id", int(aluno_id))
+                .eq("concluido", True)
+                .in_("atividade_id", ids_atividades)
+                .execute()
+            )
+            concluidas = {
+                registro["atividade_id"]
+                for registro in (historico_resultado.data or [])
+            }
+
+        resposta = []
+        for modulo in modulos:
+            atividades_modulo = [
+                atividade for atividade in atividades
+                if atividade.get("modulo_id") == modulo["id"]
+            ]
+            total = len(atividades_modulo)
+            total_concluidas = sum(
+                1 for atividade in atividades_modulo
+                if atividade["id"] in concluidas
+            )
+            pendentes = [
+                atividade for atividade in atividades_modulo
+                if atividade["id"] not in concluidas
+            ]
+
+            if total == 0:
+                status = "preparation"
+                proxima_etapa = None
+            elif total_concluidas == total:
+                status = "completed"
+                proxima_etapa = 1
+            elif total_concluidas > 0:
+                status = "in_progress"
+                proxima_etapa = pendentes[0]["ordem_sequencia"]
+            else:
+                status = "available"
+                proxima_etapa = atividades_modulo[0]["ordem_sequencia"]
+
+            resposta.append({
+                **modulo,
+                "total_atividades": total,
+                "atividades_concluidas": total_concluidas,
+                "progresso_pct": round((total_concluidas / total) * 100) if total else 0,
+                "status": status,
+                "proxima_etapa": proxima_etapa,
+            })
+
+        return jsonify(resposta), 200
 
     except Exception as erro:
         return resposta_erro(
