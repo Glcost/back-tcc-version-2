@@ -17,6 +17,7 @@ TIPOS_INTERACAO = {
     "Tap",
     "DragAndDrop",
     "MultiplaEscolha",
+    "Associacao",
 }
 
 XP_BASE_POR_ATIVIDADE = 50
