@@ -135,6 +135,77 @@ def buscar_modulo(modulo_id):
     return resultado.data
 
 
+def buscar_itens_modulo(modulo_id):
+    resultado = (
+        supabase
+        .table("itens_modulo")
+        .select(
+            (
+                "id, modulo_id, palavra_pt, palavra_en, "
+                "url_imagem_real, url_imagem_vetor, "
+                "ordem, ativo"
+            )
+        )
+        .eq("modulo_id", modulo_id)
+        .eq("ativo", True)
+        .order("ordem")
+        .execute()
+    )
+
+    return resultado.data or []
+
+
+def normalizar_itens_modulo(itens):
+    itens_normalizados = []
+    itens_invalidos = []
+
+    for item in itens:
+        item_id = item.get("id")
+        palavra_pt = str(
+            item.get("palavra_pt") or ""
+        ).strip()
+        palavra_en = str(
+            item.get("palavra_en") or ""
+        ).strip().upper()
+        url_imagem_real = str(
+            item.get("url_imagem_real") or ""
+        ).strip()
+        url_imagem_vetor = str(
+            item.get("url_imagem_vetor") or ""
+        ).strip()
+
+        try:
+            ordem = converter_inteiro(
+                item.get("ordem"),
+                "ordem",
+                minimo=1,
+            )
+        except ValueError:
+            ordem = None
+
+        if (
+            not item_id
+            or not palavra_pt
+            or not palavra_en
+            or not url_imagem_real
+            or not url_imagem_vetor
+            or ordem is None
+        ):
+            itens_invalidos.append(item_id)
+            continue
+
+        itens_normalizados.append({
+            "item_id": int(item_id),
+            "palavra_pt": palavra_pt,
+            "palavra_en": palavra_en,
+            "url_imagem_real": url_imagem_real,
+            "url_imagem_vetor": url_imagem_vetor,
+            "ordem": ordem,
+        })
+
+    return itens_normalizados, itens_invalidos
+
+
 def calcular_xp(quantidade_erros):
     penalidade = quantidade_erros * 5
 
@@ -355,6 +426,39 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                 },
             }), 422
 
+        itens_modulo = buscar_itens_modulo(
+            modulo_id
+        )
+
+        if not itens_modulo:
+            return resposta_erro(
+                (
+                    "Este módulo ainda não possui itens "
+                    "de vocabulário."
+                ),
+                "MODULE_WITHOUT_ITEMS",
+                422,
+            )
+
+        (
+            itens_normalizados,
+            itens_invalidos,
+        ) = normalizar_itens_modulo(
+            itens_modulo
+        )
+
+        if itens_invalidos:
+            return jsonify({
+                "erro": (
+                    "Existem itens de vocabulário "
+                    "incompletos neste módulo."
+                ),
+                "code": "INVALID_MODULE_ITEMS",
+                "details": {
+                    "itens_invalidos": itens_invalidos,
+                },
+            }), 422
+
         personalizacoes_resultado = (
             supabase
             .table("personalizacao_aluno")
@@ -438,6 +542,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                 "nome": modulo["nome"],
             },
             "atividades": atividades_adaptadas,
+            "itens": itens_normalizados,
         }), 200
 
     except Exception as erro:
