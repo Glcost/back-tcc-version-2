@@ -6,3 +6,4 @@ PyJWT
 werkzeug
 flasgger
 validate-docbr
+resend
