@@ -32,11 +32,25 @@ def verificar_professor(professor_id_rota,professor_id_token,):
     except (TypeError, ValueError):
         return False
 
-def verificar_professor_aluno(aluno_id, professor_id_token):
-    res = supabase.table('alunos').select('professor_id').eq('id', aluno_id).execute()
-    if not res.data:
+def verificar_professor_aluno(
+    aluno_id,
+    professor_id_token,
+):
+    resultado = (
+        
+     supabase.table("alunos").select("professor_id").eq("id", aluno_id).execute())
+
+    if not resultado.data:
         return False
-    return res.data[0].get('professor_id') == professor_id_token
+
+    return verificar_professor(
+        resultado.data[0].get("professor_id"),
+        professor_id_token,
+    )
+    
+    
+    
+
 
 @professores_bp.route('/cadastro', methods=['POST'])
 def cadastro_professor():
@@ -729,7 +743,7 @@ def cadastrar_e_avaliar_aluno():
         }), 500
     
 
-@professores_bp.route('/alunos/<int:id>', methods=['PUT'])
+@professores_bp.route('/alunos/<int:aluno_id>', methods=['PUT'])
 @token_obrigatorio
 def editar_aluno(aluno_id):
     try:
@@ -873,6 +887,107 @@ def editar_aluno(aluno_id):
             "code": "STUDENT_UPDATE_ERROR",
         }), 500
 
+
+
+@professores_bp.route("/alunos/<int:aluno_id>/pin",methods=["PATCH"])
+@token_obrigatorio
+def redefinir_pin_aluno(aluno_id):
+    try:
+        professor_id = request.professor_id
+
+        if not professor_id:
+            return jsonify({  
+                "erro": ("Acesso permitido apenas ""para professores." ),
+                "code": "FORBIDDEN",}), 403
+
+        if not verificar_professor_aluno(aluno_id,professor_id,):
+            return jsonify({
+                "erro": ("Acesso não autorizado ""a este aluno."),
+                "code": "FORBIDDEN",
+            }), 403
+
+        dados = (
+            request.get_json(silent=True)
+            or {}
+        )
+
+        novo_pin = str(
+            dados.get("novo_pin", "")
+        ).strip()
+
+        confirmacao_pin = str(
+            dados.get("confirmacao_pin", "")
+        ).strip()
+
+        if not novo_pin or not confirmacao_pin:
+            return jsonify({
+                "erro": (
+                    "Informe e confirme "
+                    "o novo PIN."
+                ),
+                "code": "MISSING_PIN_FIELDS",
+            }), 400
+
+        if not re.fullmatch(
+            r"\d{4}",
+            novo_pin,
+        ):
+            return jsonify({
+                "erro": (
+                    "O PIN deve possuir "
+                    "exatamente 4 números."
+                ),
+                "code": "INVALID_PIN",
+            }), 400
+
+        if novo_pin != confirmacao_pin:
+            return jsonify({
+                "erro": (
+                    "A confirmação do PIN "
+                    "não corresponde ao novo PIN."
+                ),
+                "code": "PIN_CONFIRMATION_MISMATCH",
+            }), 400
+
+        atualizacao = (
+            supabase
+            .table("alunos")
+            .update({
+                "pin_acesso": novo_pin,
+            })
+            .eq("id", aluno_id)
+            .eq(
+                "professor_id",
+                professor_id,
+            )
+            .execute()
+        )
+
+        if not atualizacao.data:
+            return jsonify({
+                "erro": (
+                    "Não foi possível redefinir "
+                    "o PIN do aluno."
+                ),
+                "code": "PIN_UPDATE_FAILED",
+            }), 500
+
+        return jsonify({
+            "mensagem": (
+                "PIN do aluno redefinido "
+                "com sucesso."
+            ),
+            "aluno_id": aluno_id,
+        }), 200
+
+    except Exception as error:
+        return jsonify({
+            "erro": (
+                "Erro ao redefinir o PIN "
+                f"do aluno: {str(error)}"
+            ),
+            "code": "PIN_UPDATE_ERROR",
+        }), 500
 
 
 @professores_bp.route('/alunos/<int:id>', methods=['DELETE'])
