@@ -22,7 +22,6 @@ def verificar_professor_aluno(aluno_id, professor_id_token):
 def cadastro_professor():
     try:
         dados = request.get_json(silent=True) or {}
-    
         
         # 1. Validação de campos obrigatórios
         campos = ['nome', 'email', 'senha', 'cpf']
