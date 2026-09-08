@@ -10,6 +10,7 @@ from src.professora import professores_bp
 from src.atividades import atividades_bp
 from src.relatorios import relatorios_bp
 
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -37,6 +38,15 @@ def index():
         "projeto": "Roar API",
         "versao": "1.0.0"
     }), 200
+
+
+@app.errorhandler(404)
+def nao_encontrado(error):
+    return jsonify({"erro": "Recurso não encontrado.", "code": "NOT_FOUND"}), 404
+
+@app.errorhandler(500)
+def erro_interno(error):
+    return jsonify({"erro": "Erro interno no servidor.", "code": "INTERNAL_SERVER_ERROR"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
