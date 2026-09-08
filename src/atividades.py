@@ -571,27 +571,23 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
 
         variacoes_por_atividade = {
             variacao["atividade_id"]: variacao
-            for variacao in variacoes
-        }
+                 for variacao in variacoes}
 
-        ids_sem_variacao = [
-            atividade["id"]
-            for atividade in atividades
-            if atividade["id"] not in variacoes_por_atividade
-        ]
+# Cada aluno recebe somente as atividades que possuem
+# uma variação cadastrada para seu modo de aprendizagem.
+        atividades = [ atividade for atividade in atividades
+                      
+        if ( atividade["id"] in variacoes_por_atividade)]
 
-        if ids_sem_variacao:
-            return jsonify({
-                "erro": (
-                    "Existem atividades sem variação para o "
-                    f"modo '{modo_aluno}'."
-                ),
-                "code": "ACTIVITY_VARIATION_NOT_FOUND",
-                "details": {
-                    "modo_aprendizagem": modo_aluno,
-                    "atividades_sem_variacao": ids_sem_variacao,
-                },
-            }), 422
+        if not atividades:
+             return resposta_erro(
+        (
+            "Este módulo ainda não possui atividades "
+            f"para o modo '{modo_aluno}'."
+        ),
+        "MODULE_WITHOUT_ACTIVITIES_FOR_MODE",
+        404,
+    )
 
         itens_modulo = buscar_itens_modulo(
             modulo_id
