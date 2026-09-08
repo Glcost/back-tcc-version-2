@@ -18,6 +18,9 @@ TIPOS_INTERACAO = {
     "DragAndDrop",
     "MultiplaEscolha",
     "Associacao",
+    "AudioImagem",
+    "VerdadeiroFalso",
+    "Memoria",
 }
 
 XP_BASE_POR_ATIVIDADE = 50
