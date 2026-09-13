@@ -478,10 +478,12 @@ def lista_alunos(professor_id):
 
 
 def gerar_pin_aluno():
-    tentativas_maximas = 20
+    tentativas_maximas = 30
 
     for _ in range(tentativas_maximas):
-        pin = f"{secrets.randbelow(10000):04d}"
+        pin = str(
+            1000 + secrets.randbelow(9000)
+        )
 
         resultado = (
             supabase
@@ -498,7 +500,6 @@ def gerar_pin_aluno():
     raise RuntimeError(
         "Não foi possível gerar um PIN único."
     )
-
 
 
 @professores_bp.route("/cadastrar-aluno",methods=["POST"])
