@@ -890,65 +890,38 @@ def editar_aluno(aluno_id):
 
 
 
-@professores_bp.route("/alunos/<int:aluno_id>/pin",methods=["PATCH"])
+@professores_bp.route("/alunos/<int:aluno_id>/pin",methods=["PATCH"],)
 @token_obrigatorio
 def redefinir_pin_aluno(aluno_id):
     try:
-        professor_id = request.professor_id
+        professor_id = getattr(
+            request,
+            "professor_id",
+            None,
+        )
 
         if not professor_id:
-            return jsonify({  
-                "erro": ("Acesso permitido apenas ""para professores." ),
-                "code": "FORBIDDEN",}), 403
-
-        if not verificar_professor_aluno(aluno_id,professor_id,):
             return jsonify({
-                "erro": ("Acesso não autorizado ""a este aluno."),
+                "erro": (
+                    "Acesso permitido apenas "
+                    "para professores."
+                ),
                 "code": "FORBIDDEN",
             }), 403
 
-        dados = (
-            request.get_json(silent=True)
-            or {}
-        )
-
-        novo_pin = str(
-            dados.get("novo_pin", "")
-        ).strip()
-
-        confirmacao_pin = str(
-            dados.get("confirmacao_pin", "")
-        ).strip()
-
-        if not novo_pin or not confirmacao_pin:
-            return jsonify({
-                "erro": (
-                    "Informe e confirme "
-                    "o novo PIN."
-                ),
-                "code": "MISSING_PIN_FIELDS",
-            }), 400
-
-        if not re.fullmatch(
-            r"\d{4}",
-            novo_pin,
+        if not verificar_professor_aluno(
+            aluno_id,
+            professor_id,
         ):
             return jsonify({
                 "erro": (
-                    "O PIN deve possuir "
-                    "exatamente 4 números."
+                    "Acesso não autorizado "
+                    "a este aluno."
                 ),
-                "code": "INVALID_PIN",
-            }), 400
+                "code": "FORBIDDEN",
+            }), 403
 
-        if novo_pin != confirmacao_pin:
-            return jsonify({
-                "erro": (
-                    "A confirmação do PIN "
-                    "não corresponde ao novo PIN."
-                ),
-                "code": "PIN_CONFIRMATION_MISMATCH",
-            }), 400
+        novo_pin = gerar_pin_aluno()
 
         atualizacao = (
             supabase
@@ -975,17 +948,17 @@ def redefinir_pin_aluno(aluno_id):
 
         return jsonify({
             "mensagem": (
-                "PIN do aluno redefinido "
-                "com sucesso."
+                "Novo PIN gerado com sucesso."
             ),
             "aluno_id": aluno_id,
+            "pin": novo_pin,
         }), 200
 
     except Exception as error:
         return jsonify({
             "erro": (
-                "Erro ao redefinir o PIN "
-                f"do aluno: {str(error)}"
+                "Erro ao gerar o novo PIN "
+                "do aluno."
             ),
             "code": "PIN_UPDATE_ERROR",
         }), 500
