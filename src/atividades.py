@@ -748,9 +748,7 @@ def registrar_progresso():
 
         if aluno_id_informado is not None:
             try:
-                aluno_id_informado = int(
-                    aluno_id_informado
-                )
+                aluno_id_informado = int(aluno_id_informado)
             except (TypeError, ValueError):
                 return resposta_erro(
                     "O campo 'aluno_id' é inválido.",
@@ -827,8 +825,9 @@ def registrar_progresso():
         atividade_resultado = (
             supabase
             .table("atividades")
-            .select("id")
+            .select("id, modulo_id, ordem_sequencia")
             .eq("id", atividade_id)
+            .limit(1)
             .execute()
         )
 
@@ -837,6 +836,26 @@ def registrar_progresso():
                 "Atividade não encontrada.",
                 "ACTIVITY_NOT_FOUND",
                 404,
+            )
+
+        variacao_resultado = (
+            supabase
+            .table("variacoes_atividades")
+            .select("id")
+            .eq("atividade_id", atividade_id)
+            .eq("modo_alvo", modo_utilizado)
+            .limit(1)
+            .execute()
+        )
+
+        if not variacao_resultado.data:
+            return resposta_erro(
+                (
+                    "Esta atividade não está disponível "
+                    "para o modo de aprendizagem do aluno."
+                ),
+                "ACTIVITY_NOT_AVAILABLE_FOR_MODE",
+                403,
             )
 
         conclusao_anterior = (
@@ -850,10 +869,30 @@ def registrar_progresso():
             .execute()
         )
 
-        primeira_conclusao = (
-            concluido and
-            not conclusao_anterior.data
+        xp_atual = converter_inteiro(
+            aluno.get("xp_total") or 0,
+            "xp_total",
+            minimo=0,
         )
+
+        # A atividade já foi concluída anteriormente.
+        # Não cria outro registro e não entrega XP novamente.
+        if concluido and conclusao_anterior.data:
+            return jsonify({
+                "mensagem": (
+                    "Esta atividade já estava concluída. "
+                    "Nenhum XP adicional foi concedido."
+                ),
+                "code": "ACTIVITY_ALREADY_COMPLETED",
+                "data": {
+                    "aluno_id": aluno_id,
+                    "atividade_id": atividade_id,
+                    "concluido": True,
+                    "primeira_conclusao": False,
+                    "xp_ganho": 0,
+                    "xp_total": xp_atual,
+                },
+            }), 200
 
         historico_payload = {
             "aluno_id": aluno_id,
@@ -864,28 +903,62 @@ def registrar_progresso():
             "concluido": concluido,
         }
 
-        (
-            supabase
-            .table("historico_desempenho")
-            .insert(historico_payload)
-            .execute()
-        )
+        try:
+            (
+                supabase
+                .table("historico_desempenho")
+                .insert(historico_payload)
+                .execute()
+            )
 
+        except Exception as erro_insercao:
+            texto_erro = str(erro_insercao).lower()
+
+            # Quando o índice único estiver criado, duas requisições
+            # simultâneas podem disputar a primeira conclusão.
+            # Uma delas vence e a outra recebe este retorno seguro.
+            violacao_unica = (
+                "23505" in texto_erro
+                or "duplicate key" in texto_erro
+                or "unique constraint" in texto_erro
+            )
+
+            if concluido and violacao_unica:
+                aluno_atualizado = buscar_aluno(aluno_id) or aluno
+
+                return jsonify({
+                    "mensagem": (
+                        "Esta atividade já estava concluída. "
+                        "Nenhum XP adicional foi concedido."
+                    ),
+                    "code": "ACTIVITY_ALREADY_COMPLETED",
+                    "data": {
+                        "aluno_id": aluno_id,
+                        "atividade_id": atividade_id,
+                        "concluido": True,
+                        "primeira_conclusao": False,
+                        "xp_ganho": 0,
+                        "xp_total": (
+                            aluno_atualizado.get("xp_total") or 0
+                        ),
+                    },
+                }), 200
+
+            raise erro_insercao
+
+        primeira_conclusao = concluido
         xp_ganho = 0
+        novo_xp_total = xp_atual
 
         if primeira_conclusao:
             xp_ganho = calcular_xp(quantidade_erros)
-            xp_atual = converter_inteiro(
-                aluno.get("xp_total") or 0,
-                "xp_total",
-                minimo=0,
-            )
+            novo_xp_total = xp_atual + xp_ganho
 
             (
                 supabase
                 .table("alunos")
                 .update({
-                    "xp_total": xp_atual + xp_ganho,
+                    "xp_total": novo_xp_total,
                 })
                 .eq("id", aluno_id)
                 .execute()
@@ -900,19 +973,13 @@ def registrar_progresso():
                 "concluido": concluido,
                 "primeira_conclusao": primeira_conclusao,
                 "xp_ganho": xp_ganho,
-                "xp_total": (
-                    (aluno.get("xp_total") or 0) +
-                    xp_ganho
-                ),
+                "xp_total": novo_xp_total,
             },
         }), 201
 
-    except Exception as erro:
+    except Exception:
         return resposta_erro(
-            (
-                "Erro ao salvar histórico de desempenho: "
-                f"{str(erro)}"
-            ),
+            "Não foi possível salvar o progresso da atividade.",
             "PROGRESS_SAVE_ERROR",
             500,
         )
