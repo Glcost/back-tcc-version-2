@@ -1,5 +1,4 @@
 from collections import Counter, defaultdict
-from datetime import datetime
 from statistics import mean
 
 from flask import Blueprint, current_app, jsonify, request
@@ -13,9 +12,8 @@ relatorios_bp = Blueprint(
     __name__,
 )
 
-# Os relatórios precisam realizar consultas agregadas.
-# A autorização continua sendo validada pela aplicação antes
-# de qualquer consulta que utilize o cliente administrativo.
+# Usa o cliente administrativo quando estiver configurado.
+# A autorização continua sendo validada pelas rotas.
 _db = supabase_admin if supabase_admin else supabase
 
 
@@ -133,10 +131,7 @@ def _validar_professor(professor_id):
 
     if not professor_token_id:
         return _resposta_erro(
-            (
-                "Acesso permitido apenas para "
-                "professores."
-            ),
+            "Acesso permitido apenas para professores.",
             "TEACHER_ACCESS_REQUIRED",
             403,
         )
@@ -263,6 +258,48 @@ def _buscar_alunos_professor(professor_id):
     )
 
     return resultado.data or []
+
+
+def _buscar_atividades_disponiveis_por_modo(modos):
+    modos_validos = {
+        str(modo).strip()
+        for modo in modos
+        if str(modo or "").strip()
+    }
+
+    if not modos_validos:
+        return {}
+
+    resultado = (
+        _db
+        .table("variacoes_atividades")
+        .select("atividade_id, modo_alvo")
+        .in_("modo_alvo", list(modos_validos))
+        .execute()
+    )
+
+    atividades_por_modo = {
+        modo: set()
+        for modo in modos_validos
+    }
+
+    for variacao in resultado.data or []:
+        modo = str(
+            variacao.get("modo_alvo") or ""
+        ).strip()
+
+        atividade_id = _inteiro(
+            variacao.get("atividade_id"),
+            None,
+        )
+
+        if modo and atividade_id:
+            atividades_por_modo.setdefault(
+                modo,
+                set(),
+            ).add(atividade_id)
+
+    return atividades_por_modo
 
 
 def _buscar_historico_alunos(ids_alunos):
@@ -431,7 +468,10 @@ def _enriquecer_historico(historico):
 # CÁLCULO DE MÉTRICAS
 # ============================================================
 
-def _calcular_resumo(historico):
+def _calcular_resumo(
+    historico,
+    total_atividades_disponiveis=None,
+):
     tentadas_ids = {
         registro.get("atividade_id")
         for registro in historico
@@ -467,19 +507,29 @@ def _calcular_resumo(historico):
         for registro in historico
     )
 
+    if total_atividades_disponiveis is None:
+        total_disponiveis = len(tentadas_ids)
+    else:
+        total_disponiveis = max(
+            0,
+            _inteiro(
+                total_atividades_disponiveis
+            ),
+        )
+
     return {
-        # Quantidade total de tentativas registradas.
         "tentativas_totais": len(historico),
 
-        # Quantidade de atividades únicas tentadas.
         "atividades_tentadas": len(
             tentadas_ids
         ),
 
-        # Quantidade de atividades únicas concluídas.
         "atividades_concluidas": len(
             concluidas_ids
         ),
+
+        "atividades_disponiveis":
+            total_disponiveis,
 
         "conclusoes_registradas": len(
             registros_concluidos
@@ -487,7 +537,7 @@ def _calcular_resumo(historico):
 
         "taxa_conclusao_pct": _percentual(
             len(concluidas_ids),
-            len(tentadas_ids),
+            total_disponiveis,
         ),
 
         "total_erros": total_erros,
@@ -630,7 +680,7 @@ def _ultimo_acesso(historico):
 
 
 # ============================================================
-# 1. VISÃO GERAL GLOBAL
+# VISÃO GERAL GLOBAL
 # ============================================================
 
 @relatorios_bp.route(
@@ -639,11 +689,6 @@ def _ultimo_acesso(historico):
 )
 @token_obrigatorio
 def visao_geral():
-    """
-    A visão global contém dados de toda a plataforma.
-    Somente um futuro perfil administrativo poderá acessá-la.
-    """
-
     if _perfil_autenticado() != "admin":
         return _resposta_erro(
             (
@@ -747,7 +792,7 @@ def visao_geral():
 
 
 # ============================================================
-# 2. DASHBOARD DO PROFESSOR
+# DASHBOARD DO PROFESSOR
 # ============================================================
 
 @relatorios_bp.route(
@@ -773,10 +818,21 @@ def relatorio_professor(professor_id):
                 "professor_id": professor_id,
                 "total_alunos": 0,
                 "distribuicao_modo_aprendizagem": {},
+                "total_tentativas": 0,
+                "total_atividades_concluidas": 0,
+                "media_erros_turma": 0,
+                "media_tempo_turma_segundos": 0,
                 "ranking_xp": [],
                 "alunos_com_possivel_dificuldade": [],
                 "alunos": [],
             }), 200
+
+        atividades_por_modo = (
+            _buscar_atividades_disponiveis_por_modo({
+                aluno.get("modo_aprendizagem")
+                for aluno in alunos
+            })
+        )
 
         ids_alunos = [
             aluno["id"]
@@ -802,8 +858,20 @@ def relatorio_professor(professor_id):
                 [],
             )
 
+            modo_aluno = str(
+                aluno.get("modo_aprendizagem") or ""
+            ).strip()
+
+            total_disponiveis = len(
+                atividades_por_modo.get(
+                    modo_aluno,
+                    set(),
+                )
+            )
+
             resumo = _calcular_resumo(
-                registros
+                registros,
+                total_disponiveis,
             )
 
             alunos_detalhados.append({
@@ -892,7 +960,7 @@ def relatorio_professor(professor_id):
 
 
 # ============================================================
-# 3. RELATÓRIO INDIVIDUAL DO ALUNO
+# RELATÓRIO INDIVIDUAL DO ALUNO
 # ============================================================
 
 @relatorios_bp.route(
@@ -920,6 +988,23 @@ def relatorio_aluno(aluno_id):
                 404,
             )
 
+        modo_aluno = str(
+            aluno.get("modo_aprendizagem") or ""
+        ).strip()
+
+        atividades_por_modo = (
+            _buscar_atividades_disponiveis_por_modo({
+                modo_aluno,
+            })
+        )
+
+        total_disponiveis = len(
+            atividades_por_modo.get(
+                modo_aluno,
+                set(),
+            )
+        )
+
         historico = _buscar_historico_aluno(
             aluno_id
         )
@@ -931,7 +1016,8 @@ def relatorio_aluno(aluno_id):
         )
 
         resumo = _calcular_resumo(
-            historico
+            historico,
+            total_disponiveis,
         )
 
         return jsonify({
@@ -980,7 +1066,7 @@ def relatorio_aluno(aluno_id):
 
 
 # ============================================================
-# 4. RELATÓRIO POR MÓDULO DO PROFESSOR
+# RELATÓRIO POR MÓDULO DO PROFESSOR
 # ============================================================
 
 @relatorios_bp.route(
@@ -995,10 +1081,7 @@ def relatorio_modulo(modulo_id):
 
     if not professor_id:
         return _resposta_erro(
-            (
-                "Acesso permitido apenas para "
-                "professores."
-            ),
+            "Acesso permitido apenas para professores.",
             "TEACHER_ACCESS_REQUIRED",
             403,
         )
@@ -1079,25 +1162,37 @@ def relatorio_modulo(modulo_id):
         historico_por_atividade = defaultdict(
             list
         )
+
         atividades_concluidas_por_aluno = (
             defaultdict(set)
         )
+
         alunos_participantes_modulo = set()
 
         for registro in historico:
+            atividade_id = registro.get(
+                "atividade_id"
+            )
+
+            aluno_id = registro.get(
+                "aluno_id"
+            )
+
+            if not atividade_id or not aluno_id:
+                continue
+
             historico_por_atividade[
-                registro["atividade_id"]
+                atividade_id
             ].append(registro)
+
             alunos_participantes_modulo.add(
-                registro["aluno_id"]
+                aluno_id
             )
 
             if registro.get("concluido"):
                 atividades_concluidas_por_aluno[
-                    registro["aluno_id"]
-                ].add(
-                    registro["atividade_id"]
-                )
+                    aluno_id
+                ].add(atividade_id)
 
         detalhes = []
 
@@ -1115,15 +1210,16 @@ def relatorio_modulo(modulo_id):
 
             detalhes.append({
                 "atividade_id": atividade["id"],
-                "palavra_chave": atividade[
+                "palavra_chave": atividade.get(
                     "palavra_chave"
-                ],
-                "ordem": atividade[
+                ),
+                "ordem": atividade.get(
                     "ordem_sequencia"
-                ],
+                ),
                 "alunos_participantes": len({
                     registro["aluno_id"]
                     for registro in registros
+                    if registro.get("aluno_id")
                 }),
                 **resumo,
             })
