@@ -21,6 +21,10 @@ TIPOS_INTERACAO = {
     "AudioImagem",
     "VerdadeiroFalso",
     "Memoria",
+    "CompletarFrase",
+    "OrdenarFrase",
+    "Escrita",
+    "BancoPalavras",
 }
 
 XP_BASE_POR_ATIVIDADE = 50
