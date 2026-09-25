@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta
 
 import resend
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify,current_app
 from werkzeug.security import generate_password_hash , check_password_hash
 from validate_docbr import CPF
 from auth import token_obrigatorio, gerar_token 
@@ -1006,45 +1006,220 @@ def obter_desempenho_aluno(aluno_id):
 
 
 
-
-@professores_bp.route('/dashboard/estatisticas/<int:professor_id>', methods=['GET'])
+@professores_bp.route(
+    "/dashboard/estatisticas/<int:professor_id>",
+    methods=["GET"],
+)
 @token_obrigatorio
 def estatisticas_dashboard(professor_id):
-    if not verificar_professor(professor_id, request.professor_id):
-        return jsonify({"erro": "Acesso não autorizado a este professor."}), 403
-    try:
-        # 1. Busca total de atividades ativas cadastradas no sistema
-        atividades_req = supabase.table('atividades').select('id', count='exact').execute()
-        total_atividades = atividades_req.count if atividades_req.count is not None else len(atividades_req.data)
+    """
+    Retorna as estatísticas gerais do dashboard do professor.
 
-        # 2. Busca lista de IDs de alunos vinculados a esta professora
-        alunos_req = supabase.table('alunos').select('id').eq('professor_id', professor_id).execute()
-        alunos_ids = [a['id'] for a in alunos_req.data]
+    Regras:
+    - somente o professor autenticado pode acessar seus dados;
+    - atividades inativas não entram na contagem;
+    - alunos precisam estar vinculados ao professor;
+    - registros duplicados não aumentam artificialmente
+      a quantidade de atividades concluídas.
+    """
+
+    if not verificar_professor(
+        professor_id,
+        request.professor_id,
+    ):
+        return jsonify({
+            "erro":
+                "Acesso não autorizado a este professor.",
+        }), 403
+
+    try:
+        # ==================================================
+        # 1. ATIVIDADES ATIVAS
+        # ==================================================
+
+        atividades_req = (
+            supabase
+            .table("atividades")
+            .select(
+                "id",
+                count="exact",
+            )
+            .eq("ativo", True)
+            .execute()
+        )
+
+        if atividades_req.count is not None:
+            total_atividades = atividades_req.count
+        else:
+            total_atividades = len(
+                atividades_req.data or [],
+            )
+
+        # ==================================================
+        # 2. ALUNOS VINCULADOS AO PROFESSOR
+        # ==================================================
+
+        alunos_req = (
+            supabase
+            .table("alunos")
+            .select(
+                "id, modo_aprendizagem",
+            )
+            .eq(
+                "professor_id",
+                professor_id,
+            )
+            .execute()
+        )
+
+        alunos = alunos_req.data or []
+
+        alunos_ids = [
+            aluno["id"]
+            for aluno in alunos
+            if aluno.get("id")
+        ]
 
         if not alunos_ids:
             return jsonify({
-                'total_atividades': total_atividades,
-                'media_turma': 0
+                "total_atividades":
+                    total_atividades,
+
+                "total_alunos": 0,
+
+                "total_conclusoes": 0,
+
+                "media_turma": 0,
             }), 200
 
-        # 3. Calcula a taxa global de conclusão/sucesso do historico_desempenho da turma
-        desempenho_req = supabase.table('historico_desempenho').select('concluido').in_('aluno_id', alunos_ids).execute()
-        
-        total_jogos = len(desempenho_req.data)
-        if total_jogos == 0:
-            media_turma = 0
+        # ==================================================
+        # 3. HISTÓRICO DOS ALUNOS
+        # ==================================================
+
+        desempenho_req = (
+            supabase
+            .table("historico_desempenho")
+            .select(
+                (
+                    "aluno_id, atividade_id, "
+                    "concluido"
+                )
+            )
+            .in_(
+                "aluno_id",
+                alunos_ids,
+            )
+            .execute()
+        )
+
+        registros = desempenho_req.data or []
+
+        # Guarda apenas atividades únicas concluídas
+        # para cada aluno.
+        conclusoes_por_aluno = {
+            aluno_id: set()
+            for aluno_id in alunos_ids
+        }
+
+        for registro in registros:
+            aluno_id = registro.get("aluno_id")
+            atividade_id = registro.get(
+                "atividade_id",
+            )
+
+            if (
+                aluno_id in conclusoes_por_aluno
+                and atividade_id
+                and registro.get("concluido")
+            ):
+                conclusoes_por_aluno[
+                    aluno_id
+                ].add(atividade_id)
+
+        total_conclusoes = sum(
+            len(atividades_concluidas)
+            for atividades_concluidas
+            in conclusoes_por_aluno.values()
+        )
+
+        # ==================================================
+        # 4. MÉDIA REAL DA TURMA
+        # ==================================================
+
+        percentuais_alunos = []
+
+        for aluno_id in alunos_ids:
+            quantidade_concluida = len(
+                conclusoes_por_aluno.get(
+                    aluno_id,
+                    set(),
+                )
+            )
+
+            if total_atividades > 0:
+                percentual = round(
+                    (
+                        quantidade_concluida /
+                        total_atividades
+                    ) * 100,
+                    2,
+                )
+            else:
+                percentual = 0
+
+            # Impede percentuais acima de 100 caso
+            # existam registros antigos ou inconsistentes.
+            percentual = max(
+                0,
+                min(100, percentual),
+            )
+
+            percentuais_alunos.append(
+                percentual,
+            )
+
+        if percentuais_alunos:
+            media_turma = round(
+                sum(percentuais_alunos) /
+                len(percentuais_alunos),
+            )
         else:
-            concluidos = sum(1 for d in desempenho_req.data if d.get('concluido'))
-            media_turma = round((concluidos / total_jogos) * 100)
+            media_turma = 0
+
+        # ==================================================
+        # 5. RESPOSTA
+        # ==================================================
 
         return jsonify({
-            'total_atividades': total_atividades,
-            'media_turma': media_turma
+            "total_atividades":
+                total_atividades,
+
+            "total_alunos":
+                len(alunos_ids),
+
+            "total_conclusoes":
+                total_conclusoes,
+
+            "media_turma":
+                media_turma,
         }), 200
 
-    except Exception as e:
-        return jsonify({"erro": f"Erro ao calcular estatísticas: {str(e)}"}), 500
+    except Exception:
+        current_app.logger.exception(
+            (
+                "Erro ao calcular as estatísticas "
+                "do dashboard do professor %s."
+            ),
+            professor_id,
+        )
 
+        return jsonify({
+            "erro":
+                "Não foi possível calcular as estatísticas.",
+
+            "codigo":
+                "TEACHER_DASHBOARD_STATISTICS_ERROR",
+        }), 500
 @professores_bp.route('/alunos/perfil/<int:aluno_id>', methods=['GET'])
 @token_obrigatorio
 def obter_perfil_aluno(aluno_id):
