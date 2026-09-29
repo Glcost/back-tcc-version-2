@@ -36,7 +36,7 @@ def index():
     return jsonify({
         "status": "online",
         "projeto": "Roar API",
-        "versao": "1.0.0"
+        "versao": "2.0.0"
     }), 200
 
 
