@@ -37,8 +37,14 @@ def verificar_professor_aluno(
     professor_id_token,
 ):
     resultado = (
-        
-     supabase.table("alunos").select("professor_id").eq("id", aluno_id).execute())
+        supabase
+        .table("alunos")
+        .select("professor_id")
+        .eq("id", aluno_id)
+        .eq("ativo", True)
+        .limit(1)
+        .execute()
+    )
 
     if not resultado.data:
         return False
@@ -483,7 +489,7 @@ def lista_alunos(professor_id):
     if not verificar_professor(professor_id, request.professor_id):
         return jsonify({"erro": "Acesso não autorizado a este professor."}), 403
     try:
-        busca = supabase.table('alunos').select("*").eq('professor_id', professor_id).execute()
+        busca = supabase.table('alunos').select("*").eq('professor_id', professor_id).eq("ativo", True).execute()
         return jsonify(busca.data), 200
 
     except Exception as e:
@@ -744,18 +750,31 @@ def cadastrar_e_avaliar_aluno():
         }), 500
     
 
-@professores_bp.route('/alunos/<int:aluno_id>', methods=['PUT'])
+@professores_bp.route(
+    "/alunos/<int:aluno_id>",
+    methods=["PUT"],
+)
 @token_obrigatorio
 def editar_aluno(aluno_id):
     try:
+        professor_id = getattr(
+            request,
+            "professor_id",
+            None,
+        )
+
+        if not professor_id:
+            return jsonify({
+                "erro": "Acesso permitido apenas para professores.",
+                "code": "FORBIDDEN",
+            }), 403
+
         if not verificar_professor_aluno(
             aluno_id,
-            request.professor_id,
+            professor_id,
         ):
             return jsonify({
-                "erro": (
-                    "Acesso não autorizado a este aluno."
-                ),
+                "erro": "Acesso não autorizado a este aluno.",
                 "code": "FORBIDDEN",
             }), 403
 
@@ -763,10 +782,7 @@ def editar_aluno(aluno_id):
 
         if not dados:
             return jsonify({
-                "erro": (
-                    "Nenhum dado foi fornecido "
-                    "para atualização."
-                ),
+                "erro": "Nenhum dado foi enviado.",
                 "code": "EMPTY_REQUEST",
             }), 400
 
@@ -783,16 +799,81 @@ def editar_aluno(aluno_id):
                 dados.get("nome", "")
             ).strip()
 
-            if not nome:
+            if len(nome) < 3:
                 return jsonify({
-                    "erro": (
-                        "O nome do aluno não pode "
-                        "ficar vazio."
-                    ),
+                    "erro": "Informe um nome válido.",
                     "code": "INVALID_NAME",
                 }), 400
 
             campos_para_atualizar["nome"] = nome
+
+        if "email" in dados:
+            email = str(
+                dados.get("email", "")
+            ).strip().lower()
+
+            if not re.match(
+                r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+                email,
+            ):
+                return jsonify({
+                    "erro": "Informe um e-mail válido.",
+                    "code": "INVALID_EMAIL",
+                }), 400
+
+            email_existente = (
+                supabase
+                .table("alunos")
+                .select("id")
+                .eq("email", email)
+                .neq("id", aluno_id)
+                .limit(1)
+                .execute()
+            )
+
+            if email_existente.data:
+                return jsonify({
+                    "erro": "Este e-mail já está cadastrado.",
+                    "code": "EMAIL_ALREADY_EXISTS",
+                }), 409
+
+            campos_para_atualizar["email"] = email
+
+        if "cpf_aluno" in dados:
+            cpf_aluno = re.sub(
+                r"\D",
+                "",
+                str(dados.get("cpf_aluno", "")),
+            )
+
+            if (
+                len(cpf_aluno) != 11
+                or not cpf_validate.validate(cpf_aluno)
+            ):
+                return jsonify({
+                    "erro": "Informe um CPF válido.",
+                    "code": "INVALID_CPF",
+                }), 400
+
+            cpf_existente = (
+                supabase
+                .table("alunos")
+                .select("id")
+                .eq("cpf_aluno", cpf_aluno)
+                .neq("id", aluno_id)
+                .limit(1)
+                .execute()
+            )
+
+            if cpf_existente.data:
+                return jsonify({
+                    "erro": "Este CPF já está cadastrado.",
+                    "code": "CPF_ALREADY_EXISTS",
+                }), 409
+
+            campos_para_atualizar[
+                "cpf_aluno"
+            ] = cpf_aluno
 
         if "ano_escolar" in dados:
             ano_escolar = str(
@@ -801,10 +882,7 @@ def editar_aluno(aluno_id):
 
             if not ano_escolar:
                 return jsonify({
-                    "erro": (
-                        "O ano escolar não pode "
-                        "ficar vazio."
-                    ),
+                    "erro": "Selecione o ano escolar.",
                     "code": "INVALID_SCHOOL_YEAR",
                 }), 400
 
@@ -817,17 +895,13 @@ def editar_aluno(aluno_id):
                 nivel = int(dados.get("nivel"))
             except (TypeError, ValueError):
                 return jsonify({
-                    "erro": (
-                        "O nível informado é inválido."
-                    ),
+                    "erro": "O nível informado é inválido.",
                     "code": "INVALID_SUPPORT_LEVEL",
                 }), 400
 
             if nivel not in modos_por_nivel:
                 return jsonify({
-                    "erro": (
-                        "O nível deve ser 1, 2 ou 3."
-                    ),
+                    "erro": "O nível deve ser 1, 2 ou 3.",
                     "code": "INVALID_SUPPORT_LEVEL",
                 }), 400
 
@@ -837,39 +911,37 @@ def editar_aluno(aluno_id):
 
         if not campos_para_atualizar:
             return jsonify({
-                "erro": (
-                    "Nenhum campo válido foi enviado "
-                    "para atualização."
-                ),
+                "erro": "Nenhum campo válido foi enviado.",
                 "code": "NO_VALID_FIELDS",
             }), 400
 
-        atualizacao = (
+        resultado = (
             supabase
             .table("alunos")
             .update(campos_para_atualizar)
             .eq("id", aluno_id)
+            .eq("professor_id", professor_id)
+            .eq("ativo", True)
             .execute()
         )
 
-        if not atualizacao.data:
+        if not resultado.data:
             return jsonify({
-                "erro": (
-                    "Não foi possível atualizar o aluno."
-                ),
+                "erro": "Não foi possível atualizar o aluno.",
                 "code": "STUDENT_UPDATE_FAILED",
-            }), 500
+            }), 404
 
-        aluno = atualizacao.data[0]
+        aluno = resultado.data[0]
 
         return jsonify({
-            "mensagem": (
-                "Dados do aluno atualizados "
-                "com sucesso."
-            ),
+            "mensagem": "Aluno atualizado com sucesso.",
             "aluno": {
                 "id": aluno.get("id"),
                 "nome": aluno.get("nome"),
+                "email": aluno.get("email"),
+                "cpf_aluno": str(
+                    aluno.get("cpf_aluno") or ""
+                ),
                 "ano_escolar": aluno.get(
                     "ano_escolar"
                 ),
@@ -880,14 +952,15 @@ def editar_aluno(aluno_id):
         }), 200
 
     except Exception as error:
+        print(
+            "Erro ao atualizar aluno:",
+            type(error).__name__,
+        )
+
         return jsonify({
-            "erro": (
-                "Erro ao atualizar o aluno: "
-                f"{str(error)}"
-            ),
+            "erro": "Erro interno ao atualizar o aluno.",
             "code": "STUDENT_UPDATE_ERROR",
         }), 500
-
 
 
 @professores_bp.route("/alunos/<int:aluno_id>/pin",methods=["PATCH"],)
@@ -964,20 +1037,67 @@ def redefinir_pin_aluno(aluno_id):
         }), 500
 
 
-@professores_bp.route('/alunos/<int:id>', methods=['DELETE'])
+@professores_bp.route(
+    "/alunos/<int:aluno_id>",
+    methods=["DELETE"],
+)
 @token_obrigatorio
-def apagar_alunos(id):
+def apagar_aluno(aluno_id):
     try:
+        professor_id = getattr(
+            request,
+            "professor_id",
+            None,
+        )
 
-        if not verificar_professor_aluno(id, request.professor_id):
-            return jsonify({"erro": "Acesso não autorizado a este aluno."}), 403
+        if not professor_id:
+            return jsonify({
+                "erro": "Acesso permitido apenas para professores.",
+                "code": "FORBIDDEN",
+            }), 403
 
-        busca = supabase.table('alunos').delete().eq('id', id).execute()
+        if not verificar_professor_aluno(
+            aluno_id,
+            professor_id,
+        ):
+            return jsonify({
+                "erro": "Acesso não autorizado a este aluno.",
+                "code": "FORBIDDEN",
+            }), 403
 
-        return jsonify({"mensagem": f"Aluno removido com sucesso {busca.data}"}), 200
-    
-    except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+        resultado = (
+            supabase
+            .table("alunos")
+            .update({
+                "ativo": False,
+            })
+            .eq("id", aluno_id)
+            .eq("professor_id", professor_id)
+            .eq("ativo", True)
+            .execute()
+        )
+
+        if not resultado.data:
+            return jsonify({
+                "erro": "Aluno não encontrado ou já desativado.",
+                "code": "STUDENT_NOT_FOUND",
+            }), 404
+
+        return jsonify({
+            "mensagem": "Aluno desativado com sucesso.",
+            "aluno_id": aluno_id,
+        }), 200
+
+    except Exception as error:
+        print(
+            "Erro ao desativar aluno:",
+            type(error).__name__,
+        )
+
+        return jsonify({
+            "erro": "Erro interno ao desativar o aluno.",
+            "code": "STUDENT_DELETE_ERROR",
+        }), 500
 
 
 

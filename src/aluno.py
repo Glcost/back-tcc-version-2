@@ -19,7 +19,7 @@ def login_aluno():
         pin_digitado = str(pin).strip()
         email_limpo = str(email).strip().lower()
 
-        busca = supabase.table('alunos').select('*').eq('pin_acesso', pin_digitado).eq('email', email_limpo).execute()
+        busca = supabase.table('alunos').select('*').eq('pin_acesso', pin_digitado).eq('email', email_limpo).eq("ativo", True).execute()
 
         if not busca.data or len(busca.data) == 0:
             return jsonify({"erro": "E-mail ou PIN de acesso inválido.", "code": "INVALID_CREDENTIALS"}), 401
@@ -57,7 +57,8 @@ def obter_aluno_atual():
         if not aluno_id:
             return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
 
-        aluno_res = supabase.table('alunos').select('*').eq('id', aluno_id).single().execute()
+        aluno_res = ( supabase.table("alunos").select("*").eq("id", aluno_id).eq("ativo", True).maybe_single().execute()
+            )
         if not aluno_res.data:
             return jsonify({"erro": "Estudante não encontrado.", "code": "NOT_FOUND"}), 404
 
