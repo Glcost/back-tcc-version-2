@@ -17,6 +17,93 @@ cpf_validate = CPF()
 
 professores_bp = Blueprint('professores', __name__)
 
+
+PADRAO_EMAIL = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
+    r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$"
+)
+
+
+def normalizar_email(valor):
+    return str(valor or "").strip().lower()
+
+
+def email_tem_formato_valido(email):
+    return bool(
+        email
+        and len(email) <= 254
+        and PADRAO_EMAIL.fullmatch(email)
+    )
+
+
+def email_ja_cadastrado(
+    email,
+    ignorar_tipo=None,
+    ignorar_id=None,
+):
+    """
+    Verifica se o e-mail já existe em professores ou alunos.
+
+    ignorar_tipo:
+        "professor" ou "aluno"
+
+    ignorar_id:
+        ID do usuário que está sendo editado.
+    """
+
+    email = normalizar_email(email)
+
+    professores_query = (
+        supabase
+        .table("professores")
+        .select("id")
+        .eq("email", email)
+    )
+
+    if (
+        ignorar_tipo == "professor"
+        and ignorar_id is not None
+    ):
+        professores_query = professores_query.neq(
+            "id",
+            ignorar_id,
+        )
+
+    professores_response = (
+        professores_query
+        .limit(1)
+        .execute()
+    )
+
+    if professores_response.data:
+        return True
+
+    alunos_query = (
+        supabase
+        .table("alunos")
+        .select("id")
+        .eq("email", email)
+    )
+
+    if (
+        ignorar_tipo == "aluno"
+        and ignorar_id is not None
+    ):
+        alunos_query = alunos_query.neq(
+            "id",
+            ignorar_id,
+        )
+
+    alunos_response = (
+        alunos_query
+        .limit(1)
+        .execute()
+    )
+
+    return bool(alunos_response.data)
+
+
+
 def verificar_professor(professor_id_rota,professor_id_token,):
     if (
         professor_id_rota is None
@@ -68,13 +155,13 @@ def cadastro_professor():
         if not all(k in dados and str(dados[k]).strip() for k in campos):
             return jsonify({'erro': 'Todos os campos são obrigatórios: nome, email, senha e CPF.'}), 400
         
-        email = str(dados.get('email')).strip().lower()
+        email = normalizar_email(dados.get("email")) 
         nome = str(dados.get('nome')).strip()
         senha = str(dados.get('senha')).strip()
         cpf_formatado = str(dados.get("cpf", "")).strip()
         cpf_texto = re.sub(r"\D","",cpf_formatado,)
 
-        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        if not email_tem_formato_valido(email):
             return jsonify({
                 "erro": "Informe um e-mail válido.",
                 "code": "INVALID_EMAIL",
@@ -102,9 +189,14 @@ def cadastro_professor():
             }), 400
 
         # 2. Verificação de e-mail duplicado
-        busca = supabase.table('professores').select('id').eq('email', email).execute()
-        if len(busca.data) > 0:
-            return jsonify({'erro': 'E-mail já cadastrado.'}), 409
+        if email_ja_cadastrado(email):
+            return jsonify({
+                    "erro": (
+                        "Este e-mail já está sendo utilizado "
+                        "por outro usuário."
+                    ),
+                    "code": "EMAIL_ALREADY_EXISTS",
+                }), 409
         
         # 3. Hashing da senha e inserção no Supabase
         senha_hashed = generate_password_hash(senha)
@@ -334,18 +426,11 @@ def atualizar_perfil_professor(professor_id):
             atualizacao["nome"] = nome
 
         if "email" in dados:
-            email = str(
-                dados.get("email") or ""
-            ).strip().lower()
-
-            formato_email = (
-                r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+            email = normalizar_email(
+                dados.get("email")
             )
 
-            if not re.match(
-                formato_email,
-                email,
-            ):
+            if not email_tem_formato_valido(email):
                 return jsonify({
                     "erro": (
                         "Informe um endereço de "
@@ -354,21 +439,15 @@ def atualizar_perfil_professor(professor_id):
                     "code": "INVALID_EMAIL",
                 }), 400
 
-            email_existente = (
-                supabase
-                .table("professores")
-                .select("id")
-                .eq("email", email)
-                .neq("id", professor_id)
-                .limit(1)
-                .execute()
-            )
-
-            if email_existente.data:
+            if email_ja_cadastrado(
+                email,
+                ignorar_tipo="professor",
+                ignorar_id=professor_id,
+            ):
                 return jsonify({
                     "erro": (
-                        "Este e-mail já está sendo "
-                        "utilizado."
+                        "Este e-mail já está sendo utilizado "
+                        "por outro usuário."
                     ),
                     "code": "EMAIL_ALREADY_EXISTS",
                 }), 409
@@ -566,9 +645,15 @@ def cadastrar_e_avaliar_aluno():
             dados.get("nome", "")
         ).strip()
 
-        email = str(
-            dados.get("email", "")
-        ).strip().lower()
+        email = normalizar_email(
+            dados.get("email")
+        )   
+        
+        if not email_tem_formato_valido(email):
+            return jsonify({
+                "erro": "Informe um e-mail válido.",
+                "code": "INVALID_EMAIL",
+            }), 400
 
         ano_escolar = str(
             dados.get("ano_escolar", "")
@@ -640,23 +725,17 @@ def cadastrar_e_avaliar_aluno():
             nivel_calculado = 2
             modo_aprendizagem = "Nível 2 - Aprendiz Guiado"
 
-        email_existente = (
-            supabase
-            .table("alunos")
-            .select("id")
-            .eq("email", email)
-            .execute()
-        )
-
-        if email_existente.data:
+        
+        if email_ja_cadastrado(email):
             return jsonify({
                 "erro": (
-                    "Já existe um aluno cadastrado "
-                    "com este e-mail."
+                    "Este e-mail já está sendo utilizado "
+                    "por outro aluno ou professor."
                 ),
                 "code": "EMAIL_ALREADY_EXISTS",
             }), 409
-
+            
+            
         cpf_existente = (
             supabase
             .table("alunos")
@@ -808,37 +887,32 @@ def editar_aluno(aluno_id):
             campos_para_atualizar["nome"] = nome
 
         if "email" in dados:
-            email = str(
-                dados.get("email", "")
-            ).strip().lower()
+            email = normalizar_email(
+                dados.get("email")
+            )
 
-            if not re.match(
-                r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
-                email,
-            ):
+            if not email_tem_formato_valido(email):
                 return jsonify({
                     "erro": "Informe um e-mail válido.",
                     "code": "INVALID_EMAIL",
                 }), 400
 
-            email_existente = (
-                supabase
-                .table("alunos")
-                .select("id")
-                .eq("email", email)
-                .neq("id", aluno_id)
-                .limit(1)
-                .execute()
-            )
-
-            if email_existente.data:
+            if email_ja_cadastrado(
+                email,
+                ignorar_tipo="aluno",
+                ignorar_id=aluno_id,
+            ):
                 return jsonify({
-                    "erro": "Este e-mail já está cadastrado.",
+                    "erro": (
+                        "Este e-mail já está sendo utilizado "
+                        "por outro aluno ou professor."
+                    ),
                     "code": "EMAIL_ALREADY_EXISTS",
                 }), 409
 
             campos_para_atualizar["email"] = email
-
+            
+            
         if "cpf_aluno" in dados:
             cpf_aluno = re.sub(
                 r"\D",
