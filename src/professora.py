@@ -1157,16 +1157,8 @@ def estatisticas_dashboard(professor_id):
         # 1. ATIVIDADES ATIVAS
         # ==================================================
 
-        atividades_req = (
-            supabase
-            .table("atividades")
-            .select(
-                "id",
-                count="exact",
-            )
-            .eq("ativo", True)
-            .execute()
-        )
+        atividades_req = (supabase.table("atividades").select("id").execute())
+        total_atividades = len(atividades_req.data or [])
 
         if atividades_req.count is not None:
             total_atividades = atividades_req.count
