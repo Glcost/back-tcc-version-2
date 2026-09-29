@@ -118,9 +118,7 @@ def buscar_aluno(aluno_id):
     resultado = (
         supabase
         .table("alunos")
-        .select(
-            "id, nome, modo_aprendizagem, xp_total"
-        )
+        .select(("id, nome, modo_aprendizagem, ""xp_total, professor_id"))
         .eq("id", aluno_id)
         .single()
         .execute()
@@ -141,6 +139,64 @@ def buscar_modulo(modulo_id):
 
     return resultado.data
 
+
+def obter_professor_autenticado():
+    professor_id = getattr(
+        request,
+        "professor_id",
+        None,
+    )
+
+    if not professor_id:
+        return None
+
+    try:
+        return int(professor_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def buscar_configuracoes_modulos_professor(
+    professor_id,
+):
+    resultado = (
+        supabase
+        .table("professor_modulos")
+        .select("modulo_id, ativo")
+        .eq("professor_id", professor_id)
+        .execute()
+    )
+
+    return {
+        int(configuracao["modulo_id"]):
+            bool(configuracao.get("ativo", True))
+        for configuracao in (
+            resultado.data or []
+        )
+        if configuracao.get("modulo_id")
+    }
+
+
+def modulo_liberado_para_professor(
+    professor_id,
+    modulo_id,
+):
+    resultado = (
+        supabase
+        .table("professor_modulos")
+        .select("ativo")
+        .eq("professor_id", professor_id)
+        .eq("modulo_id", modulo_id)
+        .limit(1)
+        .execute()
+    )
+
+    if not resultado.data:
+        return True
+
+    return bool(
+        resultado.data[0].get("ativo")
+    )
 
 def buscar_itens_modulo(modulo_id):
     resultado = (
@@ -239,6 +295,31 @@ def listar_modulos():
             modulos_resultado.data or []
         )
 
+        professor_id = obter_professor_autenticado()
+
+        if professor_id:
+            configuracoes = (
+                buscar_configuracoes_modulos_professor(
+                    professor_id
+                )
+            )
+
+            resposta_professor = [
+                {
+                    **modulo,
+                    "ativo": configuracoes.get(
+                        int(modulo["id"]),
+                        True,
+                    ),
+                    "ativo_global": True,
+                }
+                for modulo in modulos
+            ]
+
+            return jsonify(
+                resposta_professor
+            ), 200
+
         aluno_id = getattr(
             request,
             "aluno_id",
@@ -257,6 +338,27 @@ def listar_modulos():
                 "STUDENT_NOT_FOUND",
                 404,
             )
+            
+            
+        professor_id_aluno = aluno.get(
+            "professor_id"
+        )
+
+        if professor_id_aluno:
+            configuracoes = (
+                buscar_configuracoes_modulos_professor(
+                    int(professor_id_aluno)
+                )
+            )
+
+            modulos = [
+                modulo
+                for modulo in modulos
+                if configuracoes.get(
+                    int(modulo["id"]),
+                    True,
+                )
+            ]
 
         modo_aluno = str(
             aluno.get(
@@ -484,6 +586,132 @@ def listar_modulos():
             500,
         )
 
+
+@atividades_bp.route(
+    "/professor/modulos/<int:modulo_id>",
+    methods=["PATCH"],
+)
+@token_obrigatorio
+def alterar_disponibilidade_modulo(
+    modulo_id,
+):
+    professor_id = (
+        obter_professor_autenticado()
+    )
+
+    if not professor_id:
+        return resposta_erro(
+            (
+                "Acesso permitido apenas "
+                "para professores."
+            ),
+            "TEACHER_ACCESS_REQUIRED",
+            403,
+        )
+
+    try:
+        dados = (
+            request.get_json(silent=True)
+            or {}
+        )
+
+        if "ativo" not in dados:
+            return resposta_erro(
+                (
+                    "Informe se o módulo "
+                    "deve ficar ativo."
+                ),
+                "ACTIVE_STATUS_REQUIRED",
+                400,
+            )
+
+        ativo = converter_booleano(
+            dados.get("ativo"),
+            "ativo",
+        )
+
+        modulo = buscar_modulo(
+            modulo_id
+        )
+
+        if not modulo:
+            return resposta_erro(
+                "Módulo não encontrado.",
+                "MODULE_NOT_FOUND",
+                404,
+            )
+
+        if (
+            ativo
+            and not modulo.get("ativo", False)
+        ):
+            return resposta_erro(
+                (
+                    "Este módulo está desativado "
+                    "globalmente pelo sistema."
+                ),
+                "MODULE_GLOBALLY_INACTIVE",
+                409,
+            )
+
+        payload = {
+            "professor_id": professor_id,
+            "modulo_id": modulo_id,
+            "ativo": ativo,
+        }
+
+        resultado = (
+            supabase
+            .table("professor_modulos")
+            .upsert(
+                payload,
+                on_conflict=(
+                    "professor_id,modulo_id"
+                ),
+            )
+            .execute()
+        )
+
+        if not resultado.data:
+            return resposta_erro(
+                (
+                    "Não foi possível atualizar "
+                    "a disponibilidade do módulo."
+                ),
+                "MODULE_UPDATE_FAILED",
+                500,
+            )
+
+        return jsonify({
+            "mensagem": (
+                "Módulo ativado para a turma."
+                if ativo
+                else
+                "Módulo desativado para a turma."
+            ),
+            "modulo_id": modulo_id,
+            "ativo": ativo,
+        }), 200
+
+    except ValueError as erro:
+        return resposta_erro(
+            str(erro),
+            "INVALID_ACTIVE_STATUS",
+            400,
+        )
+
+    except Exception as erro:
+        return resposta_erro(
+            (
+                "Erro ao atualizar o módulo: "
+                f"{str(erro)}"
+            ),
+            "MODULE_UPDATE_ERROR",
+            500,
+        )
+
+
+
 @atividades_bp.route("/modulo/<int:modulo_id>/aluno/<int:aluno_id>", methods=["GET"])
 @token_obrigatorio
 def carregar_atividades_modulo(modulo_id, aluno_id):
@@ -531,6 +759,26 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
             return resposta_erro(
                 "Este módulo não está disponível.",
                 "MODULE_NOT_ACTIVE",
+                403,
+            )
+                    
+        professor_id_aluno = aluno.get(
+            "professor_id"
+        )
+
+        if (
+            professor_id_aluno
+            and not modulo_liberado_para_professor(
+                int(professor_id_aluno),
+                modulo_id,
+            )
+        ):
+            return resposta_erro(
+                (
+                    "Este módulo foi desativado "
+                    "pelo professor."
+                ),
+                "MODULE_DISABLED_BY_TEACHER",
                 403,
             )
 
