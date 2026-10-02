@@ -1,8 +1,91 @@
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from flask import Blueprint, request, jsonify
 from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase
 
 alunos_bp = Blueprint('alunos', __name__)
+
+FUSO_BRASIL = ZoneInfo("America/Sao_Paulo")
+
+
+def converter_data_historico(data_hora):
+    """
+    Converte a data do Supabase para uma data no horário de Brasília.
+    Datas sem fuso horário são consideradas como UTC.
+    """
+    if not data_hora:
+        return None
+
+    try:
+        texto_data = str(data_hora).strip()
+
+        if texto_data.endswith("Z"):
+            texto_data = texto_data[:-1] + "+00:00"
+
+        data_convertida = datetime.fromisoformat(texto_data)
+
+        if data_convertida.tzinfo is None:
+            data_convertida = data_convertida.replace(
+                tzinfo=timezone.utc
+            )
+
+        return data_convertida.astimezone(
+            FUSO_BRASIL
+        ).date()
+
+    except (TypeError, ValueError):
+        return None
+
+
+def calcular_ofensiva(aluno_id):
+    """
+    Calcula quantos dias consecutivos o aluno realizou
+    pelo menos uma atividade concluída.
+    """
+    historico_res = (
+        supabase
+        .table("historico_desempenho")
+        .select("data_hora")
+        .eq("aluno_id", aluno_id)
+        .eq("concluido", True)
+        .order("data_hora", desc=True)
+        .execute()
+    )
+
+    dias_com_atividade = {
+        dia
+        for registro in (historico_res.data or [])
+        if (
+            dia := converter_data_historico(
+                registro.get("data_hora")
+            )
+        )
+    }
+
+    if not dias_com_atividade:
+        return 0
+
+    hoje = datetime.now(
+        FUSO_BRASIL
+    ).date()
+
+    ultimo_dia = max(dias_com_atividade)
+
+    if ultimo_dia == hoje:
+        dia_analisado = hoje
+    elif ultimo_dia == hoje - timedelta(days=1):
+        dia_analisado = ultimo_dia
+    else:
+        return 0
+
+    ofensiva = 0
+
+    while dia_analisado in dias_com_atividade:
+        ofensiva += 1
+        dia_analisado -= timedelta(days=1)
+
+    return ofensiva
 
 @alunos_bp.route('/login', methods=['POST'])
 def login_aluno():
@@ -59,18 +142,25 @@ def obter_aluno_atual():
 
         aluno_res = ( supabase.table("alunos").select("*").eq("id", aluno_id).eq("ativo", True).maybe_single().execute()
             )
+        
         if not aluno_res.data:
-            return jsonify({"erro": "Estudante não encontrado.", "code": "NOT_FOUND"}), 404
-
+            return jsonify({"erro": "Estudante não encontrado.", 
+                            "code": "NOT_FOUND"}), 404
+                    
         aluno = aluno_res.data
+
+        ofensiva_atual = calcular_ofensiva(aluno_id)
+
         return jsonify({
             "id": aluno["id"],
             "name": aluno["nome"],
             "email": aluno["email"],
             "schoolYear": aluno.get("ano_escolar"),
             "supportLevel": aluno.get("modo_aprendizagem"),
-            "xpTotal": aluno.get("xp_total", 0)
+            "xpTotal": aluno.get("xp_total", 0),
+            "currentStreak": ofensiva_atual
         }), 200
+        
 
     except Exception as e:
         return jsonify({"erro": f"Falha ao carregar perfil atual: {str(e)}"}), 500
