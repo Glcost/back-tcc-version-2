@@ -1,12 +1,11 @@
 from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
 from flask import Blueprint, request, jsonify
 from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase
 
 alunos_bp = Blueprint('alunos', __name__)
 
-FUSO_BRASIL = ZoneInfo("America/Sao_Paulo")
+FUSO_BRASIL = timezone(timedelta(hours=-3))
 
 
 def converter_data_historico(data_hora):
