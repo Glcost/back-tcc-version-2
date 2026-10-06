@@ -1,11 +1,65 @@
-from datetime import datetime, timezone, timedelta
-from flask import Blueprint, request, jsonify
+from datetime import datetime, timezone, timedelta, time
+from flask import Blueprint, request, jsonify, current_app
 from auth import token_obrigatorio, gerar_token 
-from src.bd_config import supabase
+from src.bd_config import supabase, supabase_admin
 
 alunos_bp = Blueprint('alunos', __name__)
 
 FUSO_BRASIL = timezone(timedelta(hours=-3))
+
+
+MISSOES_DIARIAS = (
+    {
+        "codigo": "complete_uma_atividade",
+        "nome": "Complete uma atividade",
+        "descricao": "Realize qualquer atividade disponível.",
+        "xp": 50,
+        "meta": 1,
+        "tipo": "atividades",
+        "icone": "fi fi-br-puzzle-pieces",
+        "cor": "blue",
+    },
+    {
+        "codigo": "complete_tres_atividades",
+        "nome": "Complete três atividades",
+        "descricao": "Conclua três atividades durante o dia.",
+        "xp": 40,
+        "meta": 3,
+        "tipo": "atividades",
+        "icone": "fi fi-br-check-circle",
+        "cor": "green",
+    },
+    {
+        "codigo": "estude_dez_minutos",
+        "nome": "Estude por 10 minutos",
+        "descricao": "Acumule pelo menos 10 minutos de estudo.",
+        "xp": 30,
+        "meta": 600,
+        "tipo": "tempo",
+        "icone": "fi fi-br-time-fast",
+        "cor": "blue",
+    },
+    {
+        "codigo": "atividade_sem_erros",
+        "nome": "Conclua sem erros",
+        "descricao": "Finalize uma atividade sem cometer erros.",
+        "xp": 40,
+        "meta": 1,
+        "tipo": "sem_erros",
+        "icone": "fi fi-br-badge-check",
+        "cor": "green",
+    },
+    {
+        "codigo": "ofensiva_dois_dias",
+        "nome": "Mantenha sua ofensiva",
+        "descricao": "Estude em dois dias consecutivos.",
+        "xp": 40,
+        "meta": 2,
+        "tipo": "ofensiva",
+        "icone": "fi fi-br-flame",
+        "cor": "blue",
+    },
+)
 
 
 def converter_data_historico(data_hora):
@@ -86,6 +140,311 @@ def calcular_ofensiva(aluno_id):
 
     return ofensiva
 
+
+
+def obter_intervalo_dia_brasilia():
+    """
+    Retorna a data atual no Brasil e o intervalo equivalente
+    em UTC para consultar o histórico do Supabase.
+    """
+
+    agora_brasil = datetime.now(FUSO_BRASIL)
+    data_brasil = agora_brasil.date()
+
+    inicio_brasil = datetime.combine(
+        data_brasil,
+        time.min,
+        tzinfo=FUSO_BRASIL,
+    )
+
+    fim_brasil = inicio_brasil + timedelta(days=1)
+
+    inicio_utc = (
+        inicio_brasil
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+        .isoformat()
+    )
+
+    fim_utc = (
+        fim_brasil
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+        .isoformat()
+    )
+
+    return data_brasil, inicio_utc, fim_utc
+
+
+def buscar_aluno_para_missoes(aluno_id):
+    resultado = (
+        supabase
+        .table("alunos")
+        .select("id, nome, xp_total, ativo")
+        .eq("id", aluno_id)
+        .eq("ativo", True)
+        .limit(1)
+        .execute()
+    )
+
+    if not resultado.data:
+        return None
+
+    return resultado.data[0]
+
+
+def buscar_historico_do_dia(
+    aluno_id,
+    inicio_utc,
+    fim_utc,
+):
+    resultado = (
+        supabase
+        .table("historico_desempenho")
+        .select(
+            (
+                "atividade_id, quantidade_erros, "
+                "tempo_segundos, concluido, data_hora"
+            )
+        )
+        .eq("aluno_id", aluno_id)
+        .eq("concluido", True)
+        .gte("data_hora", inicio_utc)
+        .lt("data_hora", fim_utc)
+        .order("data_hora")
+        .execute()
+    )
+
+    return resultado.data or []
+
+
+def buscar_recompensas_recebidas(
+    aluno_id,
+    data_missao,
+):
+    if supabase_admin is None:
+        raise RuntimeError(
+            "O cliente administrativo do Supabase "
+            "não está configurado."
+        )
+
+    resultado = (
+        supabase_admin
+        .table("recompensas_missoes")
+        .select(
+            "missao_codigo, xp_recebido, recebido_em"
+        )
+        .eq("aluno_id", aluno_id)
+        .eq("data_missao", data_missao.isoformat())
+        .execute()
+    )
+
+    recompensas = {}
+
+    for registro in resultado.data or []:
+        codigo = registro.get("missao_codigo")
+
+        if codigo:
+            recompensas[codigo] = registro
+
+    return recompensas
+
+
+def calcular_metricas_diarias(
+    historico,
+    ofensiva,
+):
+    atividades_ids = {
+        registro.get("atividade_id")
+        for registro in historico
+        if registro.get("atividade_id") is not None
+    }
+
+    atividades_concluidas = len(atividades_ids)
+
+    tempo_total = sum(
+        max(
+            0,
+            int(registro.get("tempo_segundos") or 0),
+        )
+        for registro in historico
+    )
+
+    atividades_sem_erros = sum(
+        1
+        for registro in historico
+        if int(
+            registro.get("quantidade_erros") or 0
+        ) == 0
+    )
+
+    return {
+        "atividades": atividades_concluidas,
+        "tempo": tempo_total,
+        "sem_erros": atividades_sem_erros,
+        "ofensiva": ofensiva,
+    }
+
+
+def obter_progresso_missao(
+    missao,
+    metricas,
+):
+    tipo = missao["tipo"]
+    progresso = int(metricas.get(tipo, 0) or 0)
+    meta = missao["meta"]
+
+    return min(progresso, meta)
+
+
+def montar_missoes_do_dia(
+    metricas,
+    recompensas_recebidas,
+):
+    missoes = []
+
+    for configuracao in MISSOES_DIARIAS:
+        codigo = configuracao["codigo"]
+        progresso = obter_progresso_missao(
+            configuracao,
+            metricas,
+        )
+
+        concluida = progresso >= configuracao["meta"]
+        recompensa = recompensas_recebidas.get(codigo)
+        recompensa_recebida = recompensa is not None
+
+        missoes.append({
+            "codigo": codigo,
+            "nome": configuracao["nome"],
+            "descricao": configuracao["descricao"],
+            "icone": configuracao["icone"],
+            "cor": configuracao["cor"],
+            "xp": configuracao["xp"],
+            "progresso": progresso,
+            "meta": configuracao["meta"],
+            "tipo": configuracao["tipo"],
+            "concluida": concluida,
+            "recompensa_recebida": recompensa_recebida,
+            "recompensa_disponivel": (
+                concluida and not recompensa_recebida
+            ),
+            "recebido_em": (
+                recompensa.get("recebido_em")
+                if recompensa
+                else None
+            ),
+        })
+
+    return missoes
+
+
+def criar_resumo_missoes(missoes):
+    concluidas = sum(
+        1
+        for missao in missoes
+        if missao["concluida"]
+    )
+
+    recompensas_recebidas = sum(
+        1
+        for missao in missoes
+        if missao["recompensa_recebida"]
+    )
+
+    xp_recebido = sum(
+        missao["xp"]
+        for missao in missoes
+        if missao["recompensa_recebida"]
+    )
+
+    xp_disponivel = sum(
+        missao["xp"]
+        for missao in missoes
+        if missao["recompensa_disponivel"]
+    )
+
+    total = len(missoes)
+
+    progresso_pct = (
+        round((concluidas / total) * 100, 1)
+        if total
+        else 0
+    )
+
+    return {
+        "concluidas": concluidas,
+        "total": total,
+        "progresso_pct": progresso_pct,
+        "recompensas_recebidas": recompensas_recebidas,
+        "xp_recebido": xp_recebido,
+        "xp_disponivel": xp_disponivel,
+        "xp_total_possivel": sum(
+            missao["xp"]
+            for missao in missoes
+        ),
+    }
+
+
+def carregar_missoes_aluno(aluno_id):
+    aluno = buscar_aluno_para_missoes(aluno_id)
+
+    if not aluno:
+        return None
+
+    (
+        data_missao,
+        inicio_utc,
+        fim_utc,
+    ) = obter_intervalo_dia_brasilia()
+
+    historico = buscar_historico_do_dia(
+        aluno_id,
+        inicio_utc,
+        fim_utc,
+    )
+
+    ofensiva = calcular_ofensiva(aluno_id)
+
+    recompensas = buscar_recompensas_recebidas(
+        aluno_id,
+        data_missao,
+    )
+
+    metricas = calcular_metricas_diarias(
+        historico,
+        ofensiva,
+    )
+
+    missoes = montar_missoes_do_dia(
+        metricas,
+        recompensas,
+    )
+
+    return {
+        "data": data_missao.isoformat(),
+        "fuso_horario": "America/Sao_Paulo",
+        "aluno": {
+            "id": aluno["id"],
+            "nome": aluno["nome"],
+            "xp_total": int(
+                aluno.get("xp_total") or 0
+            ),
+        },
+        "resumo": criar_resumo_missoes(missoes),
+        "missoes": missoes,
+    }
+
+
+def localizar_configuracao_missao(codigo):
+    codigo_normalizado = str(codigo or "").strip()
+
+    for missao in MISSOES_DIARIAS:
+        if missao["codigo"] == codigo_normalizado:
+            return missao
+
+    return None
+
 @alunos_bp.route('/login', methods=['POST'])
 def login_aluno():
     try: 
@@ -165,8 +524,242 @@ def obter_aluno_atual():
         return jsonify({"erro": f"Falha ao carregar perfil atual: {str(e)}"}), 500
 
 
+@alunos_bp.route("/missoes-do-dia",methods=["GET"],)
+@token_obrigatorio
+def obter_missoes_do_dia():
+    try:
+        aluno_id = getattr(
+            request,
+            "aluno_id",
+            None,
+        )
 
+        if not aluno_id:
+            return jsonify({
+                "erro": (
+                    "Acesso permitido apenas "
+                    "para estudantes."
+                ),
+                "code": "STUDENT_ACCESS_REQUIRED",
+            }), 403
 
+        if supabase_admin is None:
+            return jsonify({
+                "erro": (
+                    "O serviço de missões não está "
+                    "configurado no servidor."
+                ),
+                "code": "MISSIONS_SERVICE_UNAVAILABLE",
+            }), 503
+
+        dados = carregar_missoes_aluno(
+            aluno_id
+        )
+
+        if not dados:
+            return jsonify({
+                "erro": "Aluno não encontrado.",
+                "code": "STUDENT_NOT_FOUND",
+            }), 404
+
+        return jsonify(dados), 200
+
+    except Exception:
+        current_app.logger.exception(
+            "Erro ao carregar as missões do aluno."
+        )
+
+        return jsonify({
+            "erro": (
+                "Não foi possível carregar "
+                "as missões do dia."
+            ),
+            "code": "DAILY_MISSIONS_LOAD_ERROR",
+        }), 500
+        
+        
+@alunos_bp.route("/missoes-do-dia/resgatar",methods=["POST"],)
+@token_obrigatorio
+def resgatar_recompensa_missao():
+    try:
+        aluno_id = getattr(request,"aluno_id",None,)
+        
+        if not aluno_id:
+            return jsonify({
+                "erro": (
+                    "Acesso permitido apenas "
+                    "para estudantes."
+                ),
+                "code": "STUDENT_ACCESS_REQUIRED",
+            }), 403
+
+        if supabase_admin is None:
+            return jsonify({
+                "erro": (
+                    "O serviço de missões não está "
+                    "configurado no servidor."
+                ),
+                "code": "MISSIONS_SERVICE_UNAVAILABLE",
+            }), 503
+
+        dados_requisicao = (
+            request.get_json(silent=True) or {}
+        )
+
+        missao_codigo = str(
+            dados_requisicao.get(
+                "missao_codigo",
+                "",
+            )
+        ).strip()
+
+        configuracao = localizar_configuracao_missao(
+            missao_codigo
+        )
+
+        if not configuracao:
+            return jsonify({
+                "erro": "Missão inválida.",
+                "code": "INVALID_MISSION",
+            }), 400
+
+        dados_missoes = carregar_missoes_aluno(
+            aluno_id
+        )
+
+        if not dados_missoes:
+            return jsonify({
+                "erro": "Aluno não encontrado.",
+                "code": "STUDENT_NOT_FOUND",
+            }), 404
+
+        missao_atual = next(
+            (
+                missao
+                for missao in dados_missoes["missoes"]
+                if missao["codigo"] == missao_codigo
+            ),
+            None,
+        )
+
+        if not missao_atual:
+            return jsonify({
+                "erro": "Missão não encontrada.",
+                "code": "MISSION_NOT_FOUND",
+            }), 404
+
+        if not missao_atual["concluida"]:
+            return jsonify({
+                "erro": (
+                    "A meta desta missão ainda "
+                    "não foi alcançada."
+                ),
+                "code": "MISSION_NOT_COMPLETED",
+                "missao": missao_atual,
+            }), 409
+
+        if missao_atual["recompensa_recebida"]:
+            return jsonify({
+                "mensagem": (
+                    "A recompensa desta missão "
+                    "já foi recebida."
+                ),
+                "code": "MISSION_ALREADY_CLAIMED",
+                "xp_ganho": 0,
+                "xp_total": (
+                    dados_missoes["aluno"]["xp_total"]
+                ),
+                "missao": missao_atual,
+            }), 200
+
+        data_missao = dados_missoes["data"]
+
+        try:
+            (
+                supabase_admin
+                .table("recompensas_missoes")
+                .insert({
+                    "aluno_id": aluno_id,
+                    "missao_codigo": missao_codigo,
+                    "data_missao": data_missao,
+                    "xp_recebido": configuracao["xp"],
+                })
+                .execute()
+            )
+
+        except Exception as erro_insercao:
+            texto_erro = str(
+                erro_insercao
+            ).lower()
+
+            recompensa_duplicada = (
+                "23505" in texto_erro
+                or "duplicate key" in texto_erro
+                or "unique constraint" in texto_erro
+                or "recompensa_missao_unica"
+                in texto_erro
+            )
+
+            if recompensa_duplicada:
+                aluno_atualizado = (
+                    buscar_aluno_para_missoes(
+                        aluno_id
+                    )
+                )
+
+                return jsonify({
+                    "mensagem": (
+                        "A recompensa desta missão "
+                        "já foi recebida."
+                    ),
+                    "code": "MISSION_ALREADY_CLAIMED",
+                    "xp_ganho": 0,
+                    "xp_total": int(
+                        aluno_atualizado.get(
+                            "xp_total",
+                            0,
+                        )
+                        if aluno_atualizado
+                        else 0
+                    ),
+                }), 200
+
+            raise
+
+        aluno_atualizado = (
+            buscar_aluno_para_missoes(
+                aluno_id
+            )
+        )
+
+        return jsonify({
+            "mensagem": "Recompensa recebida!",
+            "code": "MISSION_REWARD_CLAIMED",
+            "xp_ganho": configuracao["xp"],
+            "xp_total": int(
+                aluno_atualizado.get(
+                    "xp_total",
+                    0,
+                )
+                if aluno_atualizado
+                else 0
+            ),
+            "missao_codigo": missao_codigo,
+            "data_missao": data_missao,
+        }), 201
+
+    except Exception:
+        current_app.logger.exception(
+            "Erro ao resgatar recompensa de missão."
+        )
+
+        return jsonify({
+            "erro": (
+                "Não foi possível resgatar "
+                "a recompensa."
+            ),
+            "code": "MISSION_REWARD_ERROR",
+        }), 500
 
 @alunos_bp.route('/perfil/<int:aluno_id>', methods=['GET'])
 def obter_perfil_gameplay(aluno_id):
