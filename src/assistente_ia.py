@@ -22,7 +22,7 @@ def _obter_configuracao():
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     model = os.getenv(
         "GEMINI_MODEL",
-        "gemini-2.5-flash-lite",
+        "gemini-3.5-flash-lite",
     ).strip()
 
     if not api_key:
