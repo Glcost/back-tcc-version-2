@@ -118,7 +118,6 @@ def _ordenar_por_data(registro):
 
     return str(data_hora)
 
-
 def _buscar_palavras_com_dificuldade(
     historico_enriquecido,
     limite=5,
@@ -131,8 +130,10 @@ def _buscar_palavras_com_dificuldade(
     )
 
     for registro in historico_enriquecido:
+        atividade = registro.get("atividade") or {}
+
         palavra = str(
-            registro.get("palavra_chave")
+            atividade.get("palavra_chave")
             or registro.get("resposta_correta")
             or ""
         ).strip().upper()
@@ -140,8 +141,8 @@ def _buscar_palavras_com_dificuldade(
         if not palavra:
             continue
 
-        quantidade_erros = int(
-            registro.get("quantidade_erros") or 0
+        quantidade_erros = _inteiro(
+            registro.get("quantidade_erros")
         )
 
         palavras[palavra]["tentativas"] += 1
@@ -153,13 +154,11 @@ def _buscar_palavras_com_dificuldade(
         if dados["erros"] <= 0:
             continue
 
-        resultado.append(
-            {
-                "palavra": palavra,
-                "tentativas": dados["tentativas"],
-                "erros": dados["erros"],
-            }
-        )
+        resultado.append({
+            "palavra": palavra,
+            "tentativas": dados["tentativas"],
+            "erros": dados["erros"],
+        })
 
     resultado.sort(
         key=lambda item: (
@@ -229,8 +228,8 @@ def _montar_metricas_para_ia(
         "media_erros": float(
             resumo.get("media_erros") or 0
         ),
-        "tempo_medio_segundos": float(
-            resumo.get("tempo_medio_segundos") or 0
+        "media_tempo_segundos": float(
+            resumo.get("media_tempo_segundos") or 0
         ),
         "modulos": modulos,
         "palavras_com_dificuldade": (
@@ -1192,81 +1191,108 @@ def relatorio_aluno(aluno_id):
 @token_obrigatorio
 def gerar_analise_ia_aluno(aluno_id):
     if _perfil_autenticado() != "professor":
-        return jsonify(
-            {
-                "codigo": "TEACHER_REQUIRED",
-                "erro": (
-                    "Somente professores podem gerar "
-                    "a análise pedagógica."
-                ),
-            }
-        ), 403
+        return _resposta_erro(
+            (
+                "Somente professores podem gerar "
+                "a análise pedagógica."
+            ),
+            "TEACHER_REQUIRED",
+            403,
+        )
 
     professor_id = _professor_autenticado_id()
 
     if not professor_id:
-        return jsonify(
-            {
-                "codigo": "TEACHER_NOT_FOUND",
-                "erro": (
-                    "Não foi possível identificar "
-                    "o professor autenticado."
-                ),
-            }
-        ), 403
+        return _resposta_erro(
+            (
+                "Não foi possível identificar "
+                "o professor autenticado."
+            ),
+            "TEACHER_NOT_FOUND",
+            403,
+        )
 
-    if not _professor_possui_aluno(
-        professor_id,
-        aluno_id,
-    ):
-        return jsonify(
-            {
-                "codigo": "STUDENT_ACCESS_DENIED",
-                "erro": (
-                    "O aluno não pertence ao "
-                    "professor autenticado."
-                ),
-            }
-        ), 403
+    try:
+        possui_acesso = _professor_possui_aluno(
+            professor_id,
+            aluno_id,
+        )
+    except Exception:
+        current_app.logger.exception(
+            (
+                "Erro ao verificar o vínculo entre "
+                "o professor %s e o aluno %s."
+            ),
+            professor_id,
+            aluno_id,
+        )
+
+        return _resposta_erro(
+            "Não foi possível validar o acesso ao aluno.",
+            "STUDENT_ACCESS_VALIDATION_ERROR",
+            500,
+        )
+
+    if not possui_acesso:
+        return _resposta_erro(
+            (
+                "O aluno não pertence ao "
+                "professor autenticado."
+            ),
+            "STUDENT_ACCESS_DENIED",
+            403,
+        )
 
     try:
         aluno = _buscar_aluno(aluno_id)
 
         if not aluno:
-            return jsonify(
-                {
-                    "codigo": "STUDENT_NOT_FOUND",
-                    "erro": "Aluno não encontrado.",
-                }
-            ), 404
+            return _resposta_erro(
+                "Aluno não encontrado.",
+                "STUDENT_NOT_FOUND",
+                404,
+            )
 
-        historico = _buscar_historico_aluno(aluno_id)
+        historico = _buscar_historico_aluno(
+            aluno_id
+        )
 
         if not historico:
-            return jsonify(
-                {
-                    "disponivel": False,
-                    "codigo": "INSUFFICIENT_DATA",
-                    "mensagem": (
-                        "O aluno ainda não possui registros "
-                        "suficientes para gerar uma análise."
-                    ),
-                }
-            ), 200
+            return jsonify({
+                "disponivel": False,
+                "codigo": "INSUFFICIENT_DATA",
+                "mensagem": (
+                    "O aluno ainda não possui registros "
+                    "suficientes para gerar uma análise."
+                ),
+            }), 200
 
-        atividades_disponiveis = (
-            _buscar_atividades_disponiveis_por_modo(
-                aluno.get("modo_aprendizagem")
+        modo_aluno = str(
+            aluno.get("modo_aprendizagem") or ""
+        ).strip()
+
+        atividades_por_modo = (
+            _buscar_atividades_disponiveis_por_modo({
+                modo_aluno,
+            })
+        )
+
+        total_atividades_disponiveis = len(
+            atividades_por_modo.get(
+                modo_aluno,
+                set(),
             )
         )
 
-        historico_enriquecido = _enriquecer_historico(
-            historico
+        historico_enriquecido = (
+            _enriquecer_historico(
+                historico
+            )
         )
 
         resumo = _calcular_resumo(
             historico_enriquecido,
-            atividades_disponiveis,
+            total_atividades_disponiveis,
         )
 
         desempenho_modulos = (
@@ -1291,25 +1317,24 @@ def gerar_analise_ia_aluno(aluno_id):
             aluno_id,
         )
 
-        return jsonify(
-            {
-                "codigo": "AI_METRICS_ERROR",
-                "erro": (
-                    "Não foi possível preparar as métricas "
-                    "para a análise."
-                ),
-            }
-        ), 500
+        return _resposta_erro(
+            (
+                "Não foi possível preparar as métricas "
+                "para a análise."
+            ),
+            "AI_METRICS_ERROR",
+            500,
+        )
 
     try:
-        analise = gerar_analise_aluno(metricas)
+        analise = gerar_analise_aluno(
+            metricas
+        )
 
-        return jsonify(
-            {
-                "disponivel": True,
-                "analise": analise,
-            }
-        ), 200
+        return jsonify({
+            "disponivel": True,
+            "analise": analise,
+        }), 200
 
     except AssistenteIAIndisponivel:
         current_app.logger.exception(
@@ -1320,17 +1345,15 @@ def gerar_analise_ia_aluno(aluno_id):
             aluno_id,
         )
 
-        return jsonify(
-            {
-                "disponivel": False,
-                "codigo": "AI_UNAVAILABLE",
-                "mensagem": (
-                    "O assistente está temporariamente "
-                    "indisponível. O relatório continua "
-                    "funcionando normalmente."
-                ),
-            }
-        ), 200
+        return jsonify({
+            "disponivel": False,
+            "codigo": "AI_UNAVAILABLE",
+            "mensagem": (
+                "O assistente está temporariamente "
+                "indisponível. O relatório continua "
+                "funcionando normalmente."
+            ),
+        }), 200
 
 # ============================================================
 # RELATÓRIO POR MÓDULO DO PROFESSOR
