@@ -7,3 +7,5 @@ werkzeug
 flasgger
 validate-docbr
 resend
+google-genai
+pydantic

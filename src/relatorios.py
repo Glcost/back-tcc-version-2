@@ -1,10 +1,9 @@
 from collections import Counter, defaultdict
 from statistics import mean
-
 from flask import Blueprint, current_app, jsonify, request
-
 from auth import token_obrigatorio
 from src.bd_config import supabase, supabase_admin
+from src.assistente_ia import (AssistenteIAIndisponivel,gerar_analise_aluno,)
 
 
 relatorios_bp = Blueprint(
@@ -119,6 +118,127 @@ def _ordenar_por_data(registro):
 
     return str(data_hora)
 
+
+def _buscar_palavras_com_dificuldade(
+    historico_enriquecido,
+    limite=5,
+):
+    palavras = defaultdict(
+        lambda: {
+            "tentativas": 0,
+            "erros": 0,
+        }
+    )
+
+    for registro in historico_enriquecido:
+        palavra = str(
+            registro.get("palavra_chave")
+            or registro.get("resposta_correta")
+            or ""
+        ).strip().upper()
+
+        if not palavra:
+            continue
+
+        quantidade_erros = int(
+            registro.get("quantidade_erros") or 0
+        )
+
+        palavras[palavra]["tentativas"] += 1
+        palavras[palavra]["erros"] += quantidade_erros
+
+    resultado = []
+
+    for palavra, dados in palavras.items():
+        if dados["erros"] <= 0:
+            continue
+
+        resultado.append(
+            {
+                "palavra": palavra,
+                "tentativas": dados["tentativas"],
+                "erros": dados["erros"],
+            }
+        )
+
+    resultado.sort(
+        key=lambda item: (
+            item["erros"],
+            item["tentativas"],
+        ),
+        reverse=True,
+    )
+
+    return resultado[:limite]
+
+
+def _montar_metricas_para_ia(
+    aluno,
+    resumo,
+    desempenho_modulos,
+    historico_enriquecido,
+):
+    modulos = []
+
+    for modulo in desempenho_modulos:
+        modulos.append(
+            {
+                "modulo": modulo.get("nome")
+                or modulo.get("modulo")
+                or "Módulo não informado",
+                "tentativas": int(
+                    modulo.get("tentativas") or 0
+                ),
+                "atividades_concluidas": int(
+                    modulo.get("atividades_concluidas")
+                    or modulo.get("concluidas")
+                    or 0
+                ),
+                "taxa_conclusao_pct": float(
+                    modulo.get("taxa_conclusao_pct")
+                    or modulo.get("progresso_pct")
+                    or 0
+                ),
+                "media_erros": float(
+                    modulo.get("media_erros") or 0
+                ),
+            }
+        )
+
+    return {
+        "modo_aprendizagem": aluno.get(
+            "modo_aprendizagem"
+        ),
+        "ano_escolar": aluno.get("ano_escolar"),
+        "atividades_disponiveis": int(
+            resumo.get("atividades_disponiveis") or 0
+        ),
+        "atividades_concluidas": int(
+            resumo.get("atividades_concluidas") or 0
+        ),
+        "tentativas_totais": int(
+            resumo.get("tentativas_totais")
+            or resumo.get("total_tentativas")
+            or 0
+        ),
+        "taxa_conclusao_pct": float(
+            resumo.get("taxa_conclusao_pct")
+            or resumo.get("progresso_pct")
+            or 0
+        ),
+        "media_erros": float(
+            resumo.get("media_erros") or 0
+        ),
+        "tempo_medio_segundos": float(
+            resumo.get("tempo_medio_segundos") or 0
+        ),
+        "modulos": modulos,
+        "palavras_com_dificuldade": (
+            _buscar_palavras_com_dificuldade(
+                historico_enriquecido
+            )
+        ),
+    }
 
 # ============================================================
 # AUTORIZAÇÃO
@@ -1064,6 +1184,153 @@ def relatorio_aluno(aluno_id):
             500,
         )
 
+
+@relatorios_bp.route(
+    "/aluno/<int:aluno_id>/analise-ia",
+    methods=["POST"],
+)
+@token_obrigatorio
+def gerar_analise_ia_aluno(aluno_id):
+    if _perfil_autenticado() != "professor":
+        return jsonify(
+            {
+                "codigo": "TEACHER_REQUIRED",
+                "erro": (
+                    "Somente professores podem gerar "
+                    "a análise pedagógica."
+                ),
+            }
+        ), 403
+
+    professor_id = _professor_autenticado_id()
+
+    if not professor_id:
+        return jsonify(
+            {
+                "codigo": "TEACHER_NOT_FOUND",
+                "erro": (
+                    "Não foi possível identificar "
+                    "o professor autenticado."
+                ),
+            }
+        ), 403
+
+    if not _professor_possui_aluno(
+        professor_id,
+        aluno_id,
+    ):
+        return jsonify(
+            {
+                "codigo": "STUDENT_ACCESS_DENIED",
+                "erro": (
+                    "O aluno não pertence ao "
+                    "professor autenticado."
+                ),
+            }
+        ), 403
+
+    try:
+        aluno = _buscar_aluno(aluno_id)
+
+        if not aluno:
+            return jsonify(
+                {
+                    "codigo": "STUDENT_NOT_FOUND",
+                    "erro": "Aluno não encontrado.",
+                }
+            ), 404
+
+        historico = _buscar_historico_aluno(aluno_id)
+
+        if not historico:
+            return jsonify(
+                {
+                    "disponivel": False,
+                    "codigo": "INSUFFICIENT_DATA",
+                    "mensagem": (
+                        "O aluno ainda não possui registros "
+                        "suficientes para gerar uma análise."
+                    ),
+                }
+            ), 200
+
+        atividades_disponiveis = (
+            _buscar_atividades_disponiveis_por_modo(
+                aluno.get("modo_aprendizagem")
+            )
+        )
+
+        historico_enriquecido = _enriquecer_historico(
+            historico
+        )
+
+        resumo = _calcular_resumo(
+            historico_enriquecido,
+            atividades_disponiveis,
+        )
+
+        desempenho_modulos = (
+            _calcular_desempenho_modulos(
+                historico_enriquecido
+            )
+        )
+
+        metricas = _montar_metricas_para_ia(
+            aluno,
+            resumo,
+            desempenho_modulos,
+            historico_enriquecido,
+        )
+
+    except Exception:
+        current_app.logger.exception(
+            (
+                "Erro ao preparar métricas para análise "
+                "do aluno %s."
+            ),
+            aluno_id,
+        )
+
+        return jsonify(
+            {
+                "codigo": "AI_METRICS_ERROR",
+                "erro": (
+                    "Não foi possível preparar as métricas "
+                    "para a análise."
+                ),
+            }
+        ), 500
+
+    try:
+        analise = gerar_analise_aluno(metricas)
+
+        return jsonify(
+            {
+                "disponivel": True,
+                "analise": analise,
+            }
+        ), 200
+
+    except AssistenteIAIndisponivel:
+        current_app.logger.exception(
+            (
+                "O assistente de IA ficou indisponível "
+                "para o aluno %s."
+            ),
+            aluno_id,
+        )
+
+        return jsonify(
+            {
+                "disponivel": False,
+                "codigo": "AI_UNAVAILABLE",
+                "mensagem": (
+                    "O assistente está temporariamente "
+                    "indisponível. O relatório continua "
+                    "funcionando normalmente."
+                ),
+            }
+        ), 200
 
 # ============================================================
 # RELATÓRIO POR MÓDULO DO PROFESSOR
