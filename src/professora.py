@@ -619,7 +619,6 @@ def cadastrar_e_avaliar_aluno():
         campos_obrigatorios = [
             "nome",
             "email",
-            "cpf_aluno",
             "ano_escolar",
             "pergunta_a",
             "pergunta_b",
@@ -659,30 +658,6 @@ def cadastrar_e_avaliar_aluno():
             dados.get("ano_escolar", "")
         ).strip()
 
-        cpf_formatado = str(
-            dados.get("cpf_aluno", "")
-        ).strip()
-
-        cpf_aluno = re.sub(
-            r"\D",
-            "",
-            cpf_formatado,
-        )
-
-        if len(cpf_aluno) != 11:
-            return jsonify({
-                "erro": "O CPF deve possuir 11 dígitos.",
-                "code": "INVALID_CPF_LENGTH",
-            }), 400
-
-        if not cpf_validate.validate(cpf_aluno):
-            return jsonify({
-                "erro": (
-                    "O CPF informado para o aluno "
-                    "é inválido."
-                ),
-                "code": "INVALID_CPF",
-            }), 400
 
         pergunta_a = dados.get("pergunta_a")
         pergunta_b = dados.get("pergunta_b")
@@ -735,23 +710,6 @@ def cadastrar_e_avaliar_aluno():
                 "code": "EMAIL_ALREADY_EXISTS",
             }), 409
             
-            
-        cpf_existente = (
-            supabase
-            .table("alunos")
-            .select("id")
-            .eq("cpf_aluno", cpf_aluno)
-            .execute()
-        )
-
-        if cpf_existente.data:
-            return jsonify({
-                "erro": (
-                    "Já existe um aluno cadastrado "
-                    "com este CPF."
-                ),
-                "code": "CPF_ALREADY_EXISTS",
-            }), 409
 
         pin_acesso = gerar_pin_aluno()
 
@@ -760,7 +718,6 @@ def cadastrar_e_avaliar_aluno():
             "nome": nome,
             "email": email,
             "ano_escolar": ano_escolar,
-            "cpf_aluno": cpf_aluno,
             "modo_aprendizagem": modo_aprendizagem,
             "pin_acesso": pin_acesso,
         }
@@ -912,42 +869,6 @@ def editar_aluno(aluno_id):
 
             campos_para_atualizar["email"] = email
             
-            
-        if "cpf_aluno" in dados:
-            cpf_aluno = re.sub(
-                r"\D",
-                "",
-                str(dados.get("cpf_aluno", "")),
-            )
-
-            if (
-                len(cpf_aluno) != 11
-                or not cpf_validate.validate(cpf_aluno)
-            ):
-                return jsonify({
-                    "erro": "Informe um CPF válido.",
-                    "code": "INVALID_CPF",
-                }), 400
-
-            cpf_existente = (
-                supabase
-                .table("alunos")
-                .select("id")
-                .eq("cpf_aluno", cpf_aluno)
-                .neq("id", aluno_id)
-                .limit(1)
-                .execute()
-            )
-
-            if cpf_existente.data:
-                return jsonify({
-                    "erro": "Este CPF já está cadastrado.",
-                    "code": "CPF_ALREADY_EXISTS",
-                }), 409
-
-            campos_para_atualizar[
-                "cpf_aluno"
-            ] = cpf_aluno
 
         if "ano_escolar" in dados:
             ano_escolar = str(
@@ -1013,9 +934,6 @@ def editar_aluno(aluno_id):
                 "id": aluno.get("id"),
                 "nome": aluno.get("nome"),
                 "email": aluno.get("email"),
-                "cpf_aluno": str(
-                    aluno.get("cpf_aluno") or ""
-                ),
                 "ano_escolar": aluno.get(
                     "ano_escolar"
                 ),

@@ -81,8 +81,7 @@ Regras obrigatórias:
 
 Métricas pedagógicas:
 
-{metricas_json}
-""".strip()
+{metricas_json}""".strip()
 
     try:
         response = client.models.generate_content(
