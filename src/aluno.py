@@ -479,7 +479,8 @@ def login_aluno():
                 "name": aluno['nome'],
                 "email": aluno['email'],
                 "schoolYear": aluno.get('ano_escolar'),
-                "supportLevel": aluno.get('modo_aprendizagem')
+                "supportLevel": aluno.get('modo_aprendizagem'),
+                "xpTotal": aluno.get('xp_total', 0)
             }
         }), 200
 
@@ -866,14 +867,23 @@ def salvar_desempenho():
     
     
 
-@alunos_bp.route('/loja-lex', methods=['POST'])
+@alunos_bp.route('/loja-lex', methods=['GET', 'POST'])
 @token_obrigatorio
 def loja_lex():
     try:
-        # 1. Recupera ID do aluno autenticado e dados do JSON
-        identity = token_obrigatorio()
-        usuario_id = int(identity) if isinstance(identity, (int, str)) and str(identity).isdigit() else identity
+        # CORRIGIDO: Obtém o ID do aluno injetado pelo decorador @token_obrigatorio no objeto request
+        usuario_id = getattr(request, 'aluno_id', None)
+        if not usuario_id:
+            return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
 
+        # Permite requisições GET para a loja consultar o XP atualizado
+        if request.method == 'GET':
+            res_aluno = supabase.table('alunos').select('xp_total').eq('id', usuario_id).execute()
+            if not res_aluno.data:
+                return jsonify({"erro": "Aluno não encontrado."}), 404
+            return jsonify({"xp_atual": res_aluno.data[0].get('xp_total', 0)}), 200
+
+        # Lógica de POST (comprar e equipar)
         dados = request.get_json() or {}
         acao = dados.get('acao')
         raw_skin_id = dados.get('skin_id')
@@ -883,7 +893,7 @@ def loja_lex():
 
         skin_id = int(raw_skin_id)
 
-        # 2. Busca o aluno na tabela 'alunos'
+        # 1. Busca aluno no Supabase
         res_aluno = supabase.table('alunos').select('*').eq('id', usuario_id).execute()
         if not res_aluno.data:
             return jsonify({"erro": "Aluno não encontrado no sistema."}), 404
@@ -891,7 +901,7 @@ def loja_lex():
         aluno = res_aluno.data[0]
         xp_atual = int(aluno.get('xp_total') or 0)
 
-        # 3. Busca a skin na tabela 'skins_lex'
+        # 2. Busca skin na tabela skins_lex
         res_skin = supabase.table('skins_lex').select('*').eq('id', skin_id).execute()
         if not res_skin.data:
             return jsonify({"erro": "Skin não encontrada no catálogo."}), 404
@@ -899,7 +909,6 @@ def loja_lex():
         skin = res_skin.data[0]
         preco = int(skin.get('preco_xp') or 0)
 
-        # 4. AÇÃO: COMPRAR
         if acao == 'comprar':
             if xp_atual < preco:
                 return jsonify({
@@ -908,16 +917,16 @@ def loja_lex():
 
             novo_xp = xp_atual - preco
 
-            # Atualiza o saldo de XP do aluno
+            # Atualiza saldo de XP
             supabase.table('alunos').update({'xp_total': novo_xp}).eq('id', usuario_id).execute()
 
-            # Registra o desbloqueio na tabela de inventário (aluno_skins_lex)
+            # Registra no inventário
             supabase.table('aluno_skins_lex').upsert({
                 'aluno_id': usuario_id,
                 'skin_id': skin_id
             }, on_conflict='aluno_id, skin_id').execute()
 
-            # Define a nova skin como ativa no perfil
+            # Define skin ativa
             supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
 
             return jsonify({
@@ -925,7 +934,6 @@ def loja_lex():
                 "xp_restante": novo_xp
             }), 200
 
-        # 5. AÇÃO: EQUIPAR
         elif acao == 'equipar':
             supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
             return jsonify({
@@ -935,6 +943,5 @@ def loja_lex():
         return jsonify({"erro": "Ação inválida."}), 400
 
     except Exception as e:
-        # Captura o erro exato e retorna em JSON em vez de dar crash 500 sem detalhes
-        print(f"Erro na rota /loja-lex: {str(e)}")
+        current_app.logger.exception("Erro na rota /loja-lex")
         return jsonify({"erro": f"Erro interno do servidor: {str(e)}"}), 500
