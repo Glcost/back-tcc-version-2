@@ -450,7 +450,6 @@ def login_aluno():
     try: 
         dados = request.get_json(silent=True) or {}
 
-        # Aceita 'pin' ou 'pin_acesso' para manter compatibilidade com o contrato do frontend
         pin = dados.get('pin') or dados.get('pin_acesso')
         email = dados.get('email')
 
@@ -460,6 +459,7 @@ def login_aluno():
         pin_digitado = str(pin).strip()
         email_limpo = str(email).strip().lower()
 
+        # 1. Busca os dados gerais do aluno
         busca = supabase.table('alunos').select('*').eq('pin_acesso', pin_digitado).eq('email', email_limpo).eq("ativo", True).execute()
 
         if not busca.data or len(busca.data) == 0:
@@ -467,7 +467,14 @@ def login_aluno():
             
         aluno = busca.data[0]
         
-        # Emite token JWT com perfil de aluno
+        # 2. Busca o inventário de skins compradas pelo aluno
+        skins_res = supabase.table('aluno_skins_lex').select('skin_id').eq('aluno_id', aluno['id']).execute()
+        skins_desbloqueadas = [item['skin_id'] for item in skins_res.data] if skins_res.data else [1]
+        
+        # Garante que a skin inicial (1) sempre faça parte da lista
+        if 1 not in skins_desbloqueadas:
+            skins_desbloqueadas.append(1)
+        
         token = gerar_token({"id": aluno['id'], "nome": aluno['nome']}, perfil="aluno")
 
         return jsonify({
@@ -480,7 +487,9 @@ def login_aluno():
                 "email": aluno['email'],
                 "schoolYear": aluno.get('ano_escolar'),
                 "supportLevel": aluno.get('modo_aprendizagem'),
-                "xpTotal": aluno.get('xp_total', 0)
+                "xpTotal": aluno.get('xp_total', 0),
+                "skin_ativa_id": aluno.get('skin_ativa_id', 1), # Envia o Dino equipado
+                "skins_desbloqueadas": skins_desbloqueadas      # Envia o inventário de Dinos
             }
         }), 200
 
