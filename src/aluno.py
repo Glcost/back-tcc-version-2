@@ -866,79 +866,75 @@ def salvar_desempenho():
     
     
 
-@alunos_bp.route('/loja-lex', methods=['GET','POST'])
-@token_obrigatorio # <- Muito importante para garantir que quem compra é o aluno autenticado
-def loja_funcional_lex():
+@alunos_bp.route('/loja-lex', methods=['POST'])
+@token_obrigatorio
+def loja_lex():
     try:
-        aluno_id = request.aluno_id
-        if not aluno_id:
-            return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
+        # 1. Recupera ID do aluno autenticado e dados do JSON
+        identity = token_obrigatorio()
+        usuario_id = int(identity) if isinstance(identity, (int, str)) and str(identity).isdigit() else identity
 
-        dados = request.get_json(silent=True) or {}
-        acao = dados.get('acao') # Pode ser 'comprar' ou 'equipar'
-        skin_id = dados.get('skin_id')
+        dados = request.get_json() or {}
+        acao = dados.get('acao')
+        raw_skin_id = dados.get('skin_id')
 
-        if not acao or not skin_id:
+        if not acao or raw_skin_id is None:
             return jsonify({"erro": "Os campos 'acao' e 'skin_id' são obrigatórios."}), 400
 
-        # 1. Buscar os dados atuais do aluno (para verificar o XP real)
-        aluno_req = supabase.table('alunos').select('xp_total, skin_equipada_id').eq('id', aluno_id).execute()
-        if not aluno_req.data:
-            return jsonify({"erro": "Estudante não encontrado."}), 404
-        
-        aluno = aluno_req.data[0]
-        xp_atual = aluno.get('xp_total') or 0
+        skin_id = int(raw_skin_id)
 
-        # 2. Buscar os dados da Skin que ele quer comprar/equipar
-        skin_req = supabase.table('skins_lex').select('*').eq('id', skin_id).eq('ativa', True).execute()
-        if not skin_req.data:
-            return jsonify({"erro": "Esta skin não existe ou não está disponível."}), 404
-        
-        preco_skin = skin_req.data[0].get('preco_xp', 0)
+        # 2. Busca o aluno na tabela 'alunos'
+        res_aluno = supabase.table('alunos').select('*').eq('id', usuario_id).execute()
+        if not res_aluno.data:
+            return jsonify({"erro": "Aluno não encontrado no sistema."}), 404
 
-        # 3. Verificar se o aluno já tem esta skin no inventário
-        inventario_req = supabase.table('inventario_aluno').select('*').eq('aluno_id', aluno_id).eq('skin_id', skin_id).execute()
-        possui_skin = len(inventario_req.data) > 0
+        aluno = res_aluno.data[0]
+        xp_atual = int(aluno.get('xp_total') or 0)
 
-        # ==========================================
-        # LÓGICA DE COMPRA
-        # ==========================================
+        # 3. Busca a skin na tabela 'skins_lex'
+        res_skin = supabase.table('skins_lex').select('*').eq('id', skin_id).execute()
+        if not res_skin.data:
+            return jsonify({"erro": "Skin não encontrada no catálogo."}), 404
+
+        skin = res_skin.data[0]
+        preco = int(skin.get('preco_xp') or 0)
+
+        # 4. AÇÃO: COMPRAR
         if acao == 'comprar':
-            if possui_skin:
-                return jsonify({"erro": "Já possuis esta skin no teu inventário."}), 400
-            
-            if xp_atual < preco_skin:
-                return jsonify({"erro": f"XP insuficiente. Precisas de {preco_skin} XP, mas tens {xp_atual} XP."}), 400
-            
-            # Desconta o XP do aluno
-            novo_xp = xp_atual - preco_skin
-            supabase.table('alunos').update({'xp_total': novo_xp}).eq('id', aluno_id).execute()
-            
-            # Adiciona a skin ao inventário do aluno
-            supabase.table('inventario_aluno').insert({
-                'aluno_id': aluno_id, 
+            if xp_atual < preco:
+                return jsonify({
+                    "erro": f"XP insuficiente. Você possui {xp_atual} XP, mas a skin custa {preco} XP."
+                }), 400
+
+            novo_xp = xp_atual - preco
+
+            # Atualiza o saldo de XP do aluno
+            supabase.table('alunos').update({'xp_total': novo_xp}).eq('id', usuario_id).execute()
+
+            # Registra o desbloqueio na tabela de inventário (aluno_skins_lex)
+            supabase.table('aluno_skins_lex').upsert({
+                'aluno_id': usuario_id,
                 'skin_id': skin_id
-            }).execute()
-            
+            }, on_conflict='aluno_id, skin_id').execute()
+
+            # Define a nova skin como ativa no perfil
+            supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
+
             return jsonify({
-                "mensagem": "Compra realizada com sucesso!",
+                "mensagem": f"Parabéns! Você adotou o {skin.get('nome')}!",
                 "xp_restante": novo_xp
             }), 200
 
-        # ==========================================
-        # LÓGICA DE EQUIPAR
-        # ==========================================
+        # 5. AÇÃO: EQUIPAR
         elif acao == 'equipar':
-            if not possui_skin:
-                return jsonify({"erro": "Não podes equipar uma skin que ainda não compraste."}), 403
-            
-            # Atualiza o perfil do aluno com a nova skin equipada
-            supabase.table('alunos').update({'skin_equipada_id': skin_id}).eq('id', aluno_id).execute()
-            
-            return jsonify({"mensagem": "Skin do Lex equipada com sucesso!"}), 200
+            supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
+            return jsonify({
+                "mensagem": f"{skin.get('nome')} equipado com sucesso!"
+            }), 200
 
-        else:
-            return jsonify({"erro": "Ação inválida. Utiliza 'comprar' ou 'equipar'."}), 400
+        return jsonify({"erro": "Ação inválida."}), 400
 
     except Exception as e:
-        return jsonify({"erro": f"Erro interno na loja: {str(e)}"}), 500
+        # Captura o erro exato e retorna em JSON em vez de dar crash 500 sem detalhes
+        print(f"Erro na rota /loja-lex: {str(e)}")
+        return jsonify({"erro": f"Erro interno do servidor: {str(e)}"}), 500
