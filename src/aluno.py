@@ -516,7 +516,8 @@ def obter_aluno_atual():
             "schoolYear": aluno.get("ano_escolar"),
             "supportLevel": aluno.get("modo_aprendizagem"),
             "xpTotal": aluno.get("xp_total", 0),
-            "currentStreak": ofensiva_atual
+            "currentStreak": ofensiva_atual,
+            "skinEquipsdaId": aluno.get("skin_equipada_id")
         }), 200
         
 
@@ -863,3 +864,81 @@ def salvar_desempenho():
 
     except Exception as e:
         return jsonify({"erro": f"Erro de persistência: {str(e)}"}), 500
+
+
+@alunos_bp.route('/loja-lex', methods=['POST'])
+@token_obrigatorio # <- Muito importante para garantir que quem compra é o aluno autenticado
+def loja_funcional_lex():
+    try:
+        aluno_id = request.aluno_id
+        if not aluno_id:
+            return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
+
+        dados = request.get_json(silent=True) or {}
+        acao = dados.get('acao') # Pode ser 'comprar' ou 'equipar'
+        skin_id = dados.get('skin_id')
+
+        if not acao or not skin_id:
+            return jsonify({"erro": "Os campos 'acao' e 'skin_id' são obrigatórios."}), 400
+
+        # 1. Buscar os dados atuais do aluno (para verificar o XP real)
+        aluno_req = supabase.table('alunos').select('xp_total, skin_equipada_id').eq('id', aluno_id).execute()
+        if not aluno_req.data:
+            return jsonify({"erro": "Estudante não encontrado."}), 404
+        
+        aluno = aluno_req.data[0]
+        xp_atual = aluno.get('xp_total') or 0
+
+        # 2. Buscar os dados da Skin que ele quer comprar/equipar
+        skin_req = supabase.table('skins_lex').select('*').eq('id', skin_id).eq('ativa', True).execute()
+        if not skin_req.data:
+            return jsonify({"erro": "Esta skin não existe ou não está disponível."}), 404
+        
+        preco_skin = skin_req.data[0].get('preco_xp', 0)
+
+        # 3. Verificar se o aluno já tem esta skin no inventário
+        inventario_req = supabase.table('inventario_aluno').select('*').eq('aluno_id', aluno_id).eq('skin_id', skin_id).execute()
+        possui_skin = len(inventario_req.data) > 0
+
+        # ==========================================
+        # LÓGICA DE COMPRA
+        # ==========================================
+        if acao == 'comprar':
+            if possui_skin:
+                return jsonify({"erro": "Já possuis esta skin no teu inventário."}), 400
+            
+            if xp_atual < preco_skin:
+                return jsonify({"erro": f"XP insuficiente. Precisas de {preco_skin} XP, mas tens {xp_atual} XP."}), 400
+            
+            # Desconta o XP do aluno
+            novo_xp = xp_atual - preco_skin
+            supabase.table('alunos').update({'xp_total': novo_xp}).eq('id', aluno_id).execute()
+            
+            # Adiciona a skin ao inventário do aluno
+            supabase.table('inventario_aluno').insert({
+                'aluno_id': aluno_id, 
+                'skin_id': skin_id
+            }).execute()
+            
+            return jsonify({
+                "mensagem": "Compra realizada com sucesso!",
+                "xp_restante": novo_xp
+            }), 200
+
+        # ==========================================
+        # LÓGICA DE EQUIPAR
+        # ==========================================
+        elif acao == 'equipar':
+            if not possui_skin:
+                return jsonify({"erro": "Não podes equipar uma skin que ainda não compraste."}), 403
+            
+            # Atualiza o perfil do aluno com a nova skin equipada
+            supabase.table('alunos').update({'skin_equipada_id': skin_id}).eq('id', aluno_id).execute()
+            
+            return jsonify({"mensagem": "Skin do Lex equipada com sucesso!"}), 200
+
+        else:
+            return jsonify({"erro": "Ação inválida. Utiliza 'comprar' ou 'equipar'."}), 400
+
+    except Exception as e:
+        return jsonify({"erro": f"Erro interno na loja: {str(e)}"}), 500
