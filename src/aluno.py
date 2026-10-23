@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta, time
 from flask import Blueprint, request, jsonify, current_app
 from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase, supabase_admin
+from src.suporte_tea import buscar_nivel_suporte_tea
 
 alunos_bp = Blueprint('alunos', __name__)
 
@@ -459,8 +460,14 @@ def login_aluno():
         pin_digitado = str(pin).strip()
         email_limpo = str(email).strip().lower()
 
-        # 1. Busca os dados gerais do aluno
-        busca = supabase.table('alunos').select('*').eq('pin_acesso', pin_digitado).eq('email', email_limpo).eq("ativo", True).execute()
+        busca = (
+            supabase.table("alunos")
+            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total, skin_ativa_id")
+            .eq("pin_acesso", pin_digitado)
+            .eq("email", email_limpo)
+            .eq("ativo", True)
+            .execute()
+        )
 
         if not busca.data or len(busca.data) == 0:
             return jsonify({"erro": "E-mail ou PIN de acesso inválido.", "code": "INVALID_CREDENTIALS"}), 401
@@ -487,6 +494,7 @@ def login_aluno():
                 "email": aluno['email'],
                 "schoolYear": aluno.get('ano_escolar'),
                 "supportLevel": aluno.get('modo_aprendizagem'),
+                "teaSupportLevel": buscar_nivel_suporte_tea(aluno["id"]),
                 "xpTotal": aluno.get('xp_total', 0),
                 "skin_ativa_id": aluno.get('skin_ativa_id', 1),
                 "pin": aluno['pin_acesso'],# Envia o Dino equipado
@@ -509,8 +517,14 @@ def obter_aluno_atual():
         if not aluno_id:
             return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
 
-        aluno_res = ( supabase.table("alunos").select("*").eq("id", aluno_id).eq("ativo", True).maybe_single().execute()
-            )
+        aluno_res = (
+            supabase.table("alunos")
+            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total")
+            .eq("id", aluno_id)
+            .eq("ativo", True)
+            .maybe_single()
+            .execute()
+        )
         
         if not aluno_res.data:
             return jsonify({"erro": "Estudante não encontrado.", 
@@ -526,6 +540,7 @@ def obter_aluno_atual():
             "email": aluno["email"],
             "schoolYear": aluno.get("ano_escolar"),
             "supportLevel": aluno.get("modo_aprendizagem"),
+            "teaSupportLevel": buscar_nivel_suporte_tea(aluno["id"]),
             "xpTotal": aluno.get("xp_total", 0),
             "currentStreak": ofensiva_atual
         }), 200

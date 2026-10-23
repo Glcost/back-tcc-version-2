@@ -12,6 +12,14 @@ from werkzeug.security import generate_password_hash , check_password_hash
 from validate_docbr import CPF
 from auth import token_obrigatorio, gerar_token 
 from src.bd_config import supabase
+from src.suporte_tea import (
+    SuporteTeaIndisponivel,
+    buscar_nivel_suporte_tea,
+    buscar_niveis_suporte_tea,
+    exigir_configuracao_suporte_tea,
+    salvar_nivel_suporte_tea,
+    validar_nivel_suporte_tea,
+)
 
 cpf_validate = CPF()
 
@@ -568,8 +576,22 @@ def lista_alunos(professor_id):
     if not verificar_professor(professor_id, request.professor_id):
         return jsonify({"erro": "Acesso não autorizado a este professor."}), 403
     try:
-        busca = supabase.table('alunos').select("*").eq('professor_id', professor_id).eq("ativo", True).execute()
-        return jsonify(busca.data), 200
+        busca = (
+            supabase.table("alunos")
+            .select(
+                "id, professor_id, nome, email, ano_escolar, "
+                "modo_aprendizagem, pin_acesso, hiperfoco, xp_total, ativo"
+            )
+            .eq("professor_id", professor_id)
+            .eq("ativo", True)
+            .execute()
+        )
+        alunos = busca.data or []
+        niveis = buscar_niveis_suporte_tea([aluno["id"] for aluno in alunos])
+        return jsonify([
+            {**aluno, "nivel_suporte_tea": niveis.get(aluno["id"])}
+            for aluno in alunos
+        ]), 200
 
     except Exception as e:
         return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
@@ -615,6 +637,16 @@ def cadastrar_e_avaliar_aluno():
                 ),
                 "code": "FORBIDDEN",
             }), 403
+
+        try:
+            nivel_suporte_tea = validar_nivel_suporte_tea(
+                dados.get("nivel_suporte_tea")
+            )
+        except ValueError as error:
+            return jsonify({
+                "erro": str(error),
+                "code": "INVALID_TEA_SUPPORT_LEVEL",
+            }), 400
 
         campos_obrigatorios = [
             "nome",
@@ -722,6 +754,9 @@ def cadastrar_e_avaliar_aluno():
             "pin_acesso": pin_acesso,
         }
 
+        if "nivel_suporte_tea" in dados:
+            exigir_configuracao_suporte_tea()
+
         aluno_response = (
             supabase
             .table("alunos")
@@ -765,6 +800,19 @@ def cadastrar_e_avaliar_aluno():
                 "code": "ASSESSMENT_CREATION_FAILED",
             }), 500
 
+        if "nivel_suporte_tea" in dados:
+            try:
+                salvar_nivel_suporte_tea(aluno_id, nivel_suporte_tea)
+            except SuporteTeaIndisponivel:
+                return jsonify({
+                    "erro": (
+                        "Aluno cadastrado, mas não foi possível salvar o nível "
+                        "de suporte TEA. Ajuste o campo na página Alunos."
+                    ),
+                    "code": "STUDENT_CREATED_TEA_SUPPORT_FAILED",
+                    "aluno_id": aluno_id,
+                }), 503
+
         return jsonify({
             "mensagem": (
                 "Aluno cadastrado e classificado "
@@ -774,8 +822,14 @@ def cadastrar_e_avaliar_aluno():
             "pin": pin_acesso,
             "nivel_identificado": nivel_calculado,
             "modo_definido": modo_aprendizagem,
+            "nivel_suporte_tea": nivel_suporte_tea,
         }), 201
 
+    except SuporteTeaIndisponivel as error:
+        return jsonify({
+            "erro": str(error),
+            "code": "TEA_SUPPORT_UNAVAILABLE",
+        }), 503
     except Exception as error:
         return jsonify({
             "erro": (
@@ -829,6 +883,17 @@ def editar_aluno(aluno_id):
         }
 
         campos_para_atualizar = {}
+
+        if "nivel_suporte_tea" in dados:
+            try:
+                nivel_suporte_tea = (
+                    validar_nivel_suporte_tea(dados["nivel_suporte_tea"])
+                )
+            except ValueError as error:
+                return jsonify({
+                    "erro": str(error),
+                    "code": "INVALID_TEA_SUPPORT_LEVEL",
+                }), 400
 
         if "nome" in dados:
             nome = str(
@@ -904,16 +969,25 @@ def editar_aluno(aluno_id):
                 "modo_aprendizagem"
             ] = modos_por_nivel[nivel]
 
-        if not campos_para_atualizar:
+        if not campos_para_atualizar and "nivel_suporte_tea" not in dados:
             return jsonify({
                 "erro": "Nenhum campo válido foi enviado.",
                 "code": "NO_VALID_FIELDS",
             }), 400
 
+        if "nivel_suporte_tea" in dados:
+            exigir_configuracao_suporte_tea()
+
+        consulta = supabase.table("alunos")
+        if campos_para_atualizar:
+            consulta = consulta.update(campos_para_atualizar)
+        else:
+            consulta = consulta.select(
+                "id, nome, email, ano_escolar, modo_aprendizagem"
+            )
+
         resultado = (
-            supabase
-            .table("alunos")
-            .update(campos_para_atualizar)
+            consulta
             .eq("id", aluno_id)
             .eq("professor_id", professor_id)
             .eq("ativo", True)
@@ -928,6 +1002,11 @@ def editar_aluno(aluno_id):
 
         aluno = resultado.data[0]
 
+        if "nivel_suporte_tea" in dados:
+            salvar_nivel_suporte_tea(aluno_id, nivel_suporte_tea)
+        else:
+            nivel_suporte_tea = buscar_nivel_suporte_tea(aluno_id)
+
         return jsonify({
             "mensagem": "Aluno atualizado com sucesso.",
             "aluno": {
@@ -940,9 +1019,15 @@ def editar_aluno(aluno_id):
                 "modo_aprendizagem": aluno.get(
                     "modo_aprendizagem"
                 ),
+                "nivel_suporte_tea": nivel_suporte_tea,
             },
         }), 200
 
+    except SuporteTeaIndisponivel as error:
+        return jsonify({
+            "erro": str(error),
+            "code": "TEA_SUPPORT_UNAVAILABLE",
+        }), 503
     except Exception as error:
         print(
             "Erro ao atualizar aluno:",

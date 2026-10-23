@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 
 from auth import token_obrigatorio
 from src.bd_config import supabase
+from src.suporte_tea import buscar_nivel_suporte_tea
 
 
 atividades_bp = Blueprint("atividades", __name__)
@@ -118,7 +119,8 @@ def buscar_aluno(aluno_id):
     resultado = (
         supabase
         .table("alunos")
-        .select(("id, nome, modo_aprendizagem, ""xp_total, professor_id"))
+        .select(("id, nome, modo_aprendizagem, "
+                 "xp_total, professor_id"))
         .eq("id", aluno_id)
         .single()
         .execute()
@@ -953,6 +955,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                 "id": aluno["id"],
                 "nome": aluno["nome"],
                 "modo_aprendizagem": modo_aluno,
+                "nivel_suporte_tea": buscar_nivel_suporte_tea(aluno_id_autenticado),
                 "xp_total": aluno.get("xp_total") or 0,
             },
             "modulo": {
