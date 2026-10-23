@@ -451,7 +451,6 @@ def login_aluno():
     try: 
         dados = request.get_json(silent=True) or {}
 
-        # Aceita 'pin' ou 'pin_acesso' para manter compatibilidade com o contrato do frontend
         pin = dados.get('pin') or dados.get('pin_acesso')
         email = dados.get('email')
 
@@ -463,7 +462,7 @@ def login_aluno():
 
         busca = (
             supabase.table("alunos")
-            .select("id, nome, email, ano_escolar, modo_aprendizagem")
+            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total, skin_ativa_id")
             .eq("pin_acesso", pin_digitado)
             .eq("email", email_limpo)
             .eq("ativo", True)
@@ -475,7 +474,14 @@ def login_aluno():
             
         aluno = busca.data[0]
         
-        # Emite token JWT com perfil de aluno
+        # 2. Busca o inventário de skins compradas pelo aluno
+        skins_res = supabase.table('aluno_skins_lex').select('skin_id').eq('aluno_id', aluno['id']).execute()
+        skins_desbloqueadas = [item['skin_id'] for item in skins_res.data] if skins_res.data else [1]
+        
+        # Garante que a skin inicial (1) sempre faça parte da lista
+        if 1 not in skins_desbloqueadas:
+            skins_desbloqueadas.append(1)
+        
         token = gerar_token({"id": aluno['id'], "nome": aluno['nome']}, perfil="aluno")
 
         return jsonify({
@@ -489,6 +495,9 @@ def login_aluno():
                 "schoolYear": aluno.get('ano_escolar'),
                 "supportLevel": aluno.get('modo_aprendizagem'),
                 "teaSupportLevel": buscar_nivel_suporte_tea(aluno["id"]),
+                "xpTotal": aluno.get('xp_total', 0),
+                "skin_ativa_id": aluno.get('skin_ativa_id', 1), # Envia o Dino equipado
+                "skins_desbloqueadas": skins_desbloqueadas      # Envia o inventário de Dinos
             }
         }), 200
 
@@ -879,3 +888,84 @@ def salvar_desempenho():
 
     except Exception as e:
         return jsonify({"erro": f"Erro de persistência: {str(e)}"}), 500
+    
+    
+
+@alunos_bp.route('/loja-lex', methods=['GET', 'POST'])
+@token_obrigatorio
+def loja_lex():
+    try:
+        # CORRIGIDO: Obtém o ID do aluno injetado pelo decorador @token_obrigatorio no objeto request
+        usuario_id = getattr(request, 'aluno_id', None)
+        if not usuario_id:
+            return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
+
+        # Permite requisições GET para a loja consultar o XP atualizado
+        if request.method == 'GET':
+            res_aluno = supabase.table('alunos').select('xp_total').eq('id', usuario_id).execute()
+            if not res_aluno.data:
+                return jsonify({"erro": "Aluno não encontrado."}), 404
+            return jsonify({"xp_atual": res_aluno.data[0].get('xp_total', 0)}), 200
+
+        # Lógica de POST (comprar e equipar)
+        dados = request.get_json() or {}
+        acao = dados.get('acao')
+        raw_skin_id = dados.get('skin_id')
+
+        if not acao or raw_skin_id is None:
+            return jsonify({"erro": "Os campos 'acao' e 'skin_id' são obrigatórios."}), 400
+
+        skin_id = int(raw_skin_id)
+
+        # 1. Busca aluno no Supabase
+        res_aluno = supabase.table('alunos').select('*').eq('id', usuario_id).execute()
+        if not res_aluno.data:
+            return jsonify({"erro": "Aluno não encontrado no sistema."}), 404
+
+        aluno = res_aluno.data[0]
+        xp_atual = int(aluno.get('xp_total') or 0)
+
+        # 2. Busca skin na tabela skins_lex
+        res_skin = supabase.table('skins_lex').select('*').eq('id', skin_id).execute()
+        if not res_skin.data:
+            return jsonify({"erro": "Skin não encontrada no catálogo."}), 404
+
+        skin = res_skin.data[0]
+        preco = int(skin.get('preco_xp') or 0)
+
+        if acao == 'comprar':
+            if xp_atual < preco:
+                return jsonify({
+                    "erro": f"XP insuficiente. Você possui {xp_atual} XP, mas a skin custa {preco} XP."
+                }), 400
+
+            novo_xp = xp_atual - preco
+
+            # Atualiza saldo de XP
+            supabase.table('alunos').update({'xp_total': novo_xp}).eq('id', usuario_id).execute()
+
+            # Registra no inventário
+            supabase.table('aluno_skins_lex').upsert({
+                'aluno_id': usuario_id,
+                'skin_id': skin_id
+            }, on_conflict='aluno_id, skin_id').execute()
+
+            # Define skin ativa
+            supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
+
+            return jsonify({
+                "mensagem": f"Parabéns! Você adotou o {skin.get('nome')}!",
+                "xp_restante": novo_xp
+            }), 200
+
+        elif acao == 'equipar':
+            supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
+            return jsonify({
+                "mensagem": f"{skin.get('nome')} equipado com sucesso!"
+            }), 200
+
+        return jsonify({"erro": "Ação inválida."}), 400
+
+    except Exception as e:
+        current_app.logger.exception("Erro na rota /loja-lex")
+        return jsonify({"erro": f"Erro interno do servidor: {str(e)}"}), 500
