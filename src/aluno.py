@@ -462,7 +462,7 @@ def login_aluno():
 
         busca = (
             supabase.table("alunos")
-            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total, skin_ativa_id, pin_acesso")
+            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total, skin_ativa_id")
             .eq("pin_acesso", pin_digitado)
             .eq("email", email_limpo)
             .eq("ativo", True)
@@ -497,7 +497,6 @@ def login_aluno():
                 "teaSupportLevel": buscar_nivel_suporte_tea(aluno["id"]),
                 "xpTotal": aluno.get('xp_total', 0),
                 "skin_ativa_id": aluno.get('skin_ativa_id', 1),
-                "pin": aluno.get('pin_acesso', '0000'),# Envia o Dino equipado
                 "skins_desbloqueadas": skins_desbloqueadas      # Envia o inventário de Dinos
             }
         }), 200
@@ -519,7 +518,7 @@ def obter_aluno_atual():
 
         aluno_res = (
             supabase.table("alunos")
-            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total")
+            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total, pin_acesso")
             .eq("id", aluno_id)
             .eq("ativo", True)
             .maybe_single()
@@ -542,6 +541,7 @@ def obter_aluno_atual():
             "supportLevel": aluno.get("modo_aprendizagem"),
             "teaSupportLevel": buscar_nivel_suporte_tea(aluno["id"]),
             "xpTotal": aluno.get("xp_total", 0),
+            "pin": str(aluno.get("pin_acesso", "0000")).strip(),
             "currentStreak": ofensiva_atual
         }), 200
         
