@@ -462,7 +462,7 @@ def login_aluno():
 
         busca = (
             supabase.table("alunos")
-            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total, skin_ativa_id")
+            .select("id, nome, email, ano_escolar, modo_aprendizagem, xp_total, skin_ativa_id, pin_acesso")
             .eq("pin_acesso", pin_digitado)
             .eq("email", email_limpo)
             .eq("ativo", True)
@@ -497,7 +497,7 @@ def login_aluno():
                 "teaSupportLevel": buscar_nivel_suporte_tea(aluno["id"]),
                 "xpTotal": aluno.get('xp_total', 0),
                 "skin_ativa_id": aluno.get('skin_ativa_id', 1),
-                "pin": aluno['pin_acesso'],# Envia o Dino equipado
+                "pin": str(aluno.get('pin_acesso', '0000')).strip(),# Envia o Dino equipado
                 "skins_desbloqueadas": skins_desbloqueadas      # Envia o inventário de Dinos
             }
         }), 200
