@@ -497,7 +497,7 @@ def login_aluno():
                 "teaSupportLevel": buscar_nivel_suporte_tea(aluno["id"]),
                 "xpTotal": aluno.get('xp_total', 0),
                 "skin_ativa_id": aluno.get('skin_ativa_id', 1),
-                "pin": str(aluno.get('pin_acesso', '0000')).strip(),# Envia o Dino equipado
+                "pin": aluno.get('pin_acesso', '0000'),# Envia o Dino equipado
                 "skins_desbloqueadas": skins_desbloqueadas      # Envia o inventário de Dinos
             }
         }), 200
