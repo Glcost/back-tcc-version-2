@@ -488,7 +488,8 @@ def login_aluno():
                 "schoolYear": aluno.get('ano_escolar'),
                 "supportLevel": aluno.get('modo_aprendizagem'),
                 "xpTotal": aluno.get('xp_total', 0),
-                "skin_ativa_id": aluno.get('skin_ativa_id', 1), # Envia o Dino equipado
+                "skin_ativa_id": aluno.get('skin_ativa_id', 1),
+                "pin": aluno['pin_acesso'],# Envia o Dino equipado
                 "skins_desbloqueadas": skins_desbloqueadas      # Envia o inventário de Dinos
             }
         }), 200
