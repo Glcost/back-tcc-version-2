@@ -3,6 +3,7 @@ from statistics import mean
 from flask import Blueprint, current_app, jsonify, request
 from auth import token_obrigatorio
 from src.bd_config import supabase, supabase_admin
+from src.suporte_tea import buscar_nivel_suporte_tea, buscar_niveis_suporte_tea
 from src.assistente_ia import (AssistenteIAIndisponivel,gerar_analise_aluno,)
 
 
@@ -367,8 +368,7 @@ def _buscar_alunos_professor(professor_id):
         .select(
             (
                 "id, professor_id, nome, "
-                "ano_escolar, modo_aprendizagem, "
-                "xp_total"
+                "ano_escolar, modo_aprendizagem, xp_total"
             )
         )
         .eq("professor_id", professor_id)
@@ -958,6 +958,7 @@ def relatorio_professor(professor_id):
             for aluno in alunos
         ]
 
+        niveis_suporte_tea = buscar_niveis_suporte_tea(ids_alunos)
         historico = _buscar_historico_alunos(
             ids_alunos
         )
@@ -1002,6 +1003,7 @@ def relatorio_professor(professor_id):
                 "modo_aprendizagem": aluno.get(
                     "modo_aprendizagem"
                 ),
+                "nivel_suporte_tea": niveis_suporte_tea.get(aluno["id"]),
                 "xp_total": _inteiro(
                     aluno.get("xp_total")
                 ),
@@ -1149,6 +1151,7 @@ def relatorio_aluno(aluno_id):
                 "modo_aprendizagem": aluno.get(
                     "modo_aprendizagem"
                 ),
+                "nivel_suporte_tea": buscar_nivel_suporte_tea(aluno_id),
                 "xp_total": _inteiro(
                     aluno.get("xp_total")
                 ),
