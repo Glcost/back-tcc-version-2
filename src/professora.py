@@ -1688,7 +1688,7 @@ def _send_emailjs_template(template_id, template_params):
 
     if not response.ok:
         raise RuntimeError(
-            f"EmailJS recusou o envio (HTTP {response.status_code})."
+            f"EmailJS HTTP {response.status_code}: {response.text[:300]}"
         )
 
 
@@ -1829,5 +1829,5 @@ def reenviar_codigo_email_professor():
         _create_and_send_email_verification(professor)
         return jsonify({"mensagem": generic_message}), 200
     except Exception as error:
-        print(f"Falha ao reenviar confirmação: {type(error).__name__}")
+        print(f"Falha ao reenviar confirmação: {type(error).__name__}: {error}")
         return jsonify({"mensagem": generic_message}), 200
