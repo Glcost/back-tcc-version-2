@@ -1673,10 +1673,16 @@ def _latest_email_verification(professor_id):
 def _send_emailjs_template(template_id, template_params):
     service_id, _, _, public_key, _ = _recovery_configuration()
 
+    private_key = os.getenv("EMAILJS_PRIVATE_KEY", "").strip()
+
+    if not private_key:
+        raise RuntimeError("EMAILJS_PRIVATE_KEY não foi configurada.")
+    
     payload = {
         "service_id": service_id,
         "template_id": template_id,
         "user_id": public_key,
+        "accessToken": private_key,
         "template_params": template_params,
     }
 
