@@ -9,3 +9,4 @@ validate-docbr
 resend
 google-genai
 pydantic
+requests

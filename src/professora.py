@@ -3,10 +3,10 @@ import secrets
 import hashlib
 import hmac
 import html
+import requests
 import os
 from datetime import datetime, timedelta
 
-import resend
 from flask import Blueprint, request, jsonify,current_app
 from werkzeug.security import generate_password_hash , check_password_hash
 from validate_docbr import CPF
@@ -1433,17 +1433,36 @@ GENERIC_RECOVERY_MESSAGE = (
 
 
 def _recovery_configuration():
-    api_key = os.getenv("RESEND_API_KEY", "").strip()
-    from_email = os.getenv("RESEND_FROM_EMAIL", "").strip()
+    service_id = os.getenv("EMAILJS_SERVICE_ID", "").strip()
+    recovery_template_id = os.getenv(
+        "EMAILJS_TEMPLATE_ID",
+        "",
+    ).strip()
+    verification_template_id = os.getenv(
+        "EMAILJS_VERIFICATION_TEMPLATE_ID",
+        "",
+    ).strip()
+    public_key = os.getenv("EMAILJS_PUBLIC_KEY", "").strip()
     pepper = os.getenv("PASSWORD_RESET_PEPPER", "").strip()
 
-    if not api_key or not from_email or not pepper:
+    if not all((
+        service_id,
+        recovery_template_id,
+        verification_template_id,
+        public_key,
+        pepper,
+    )):
         raise RuntimeError(
-            "As variáveis de recuperação de senha não foram configuradas."
+            "As variáveis de e-mail e recuperação não foram configuradas."
         )
 
-    return api_key, from_email, pepper
-
+    return (
+        service_id,
+        recovery_template_id,
+        verification_template_id,
+        public_key,
+        pepper,
+    )
 
 def _normalize_recovery_email(value):
     email = str(value or "").strip().lower()
@@ -1508,7 +1527,7 @@ def _validate_recovery_code(professor, code, count_attempt=True):
     if attempts >= RECOVERY_MAX_ATTEMPTS:
         return None, "O limite de tentativas foi atingido. Solicite outro código."
 
-    _, _, pepper = _recovery_configuration()
+    _, _, _, _, pepper = _recovery_configuration()
     received_hash = _hash_recovery_code(professor["id"], code, pepper)
     valid = hmac.compare_digest(received_hash, recovery["codigo_hash"])
 
@@ -1521,29 +1540,6 @@ def _validate_recovery_code(professor, code, count_attempt=True):
         return None, "Código inválido ou expirado."
 
     return recovery, None
-
-
-def _send_recovery_email(professor, code):
-    api_key, from_email, _ = _recovery_configuration()
-    resend.api_key = api_key
-    safe_name = html.escape(str(professor.get("nome") or "Professor"))
-    safe_code = html.escape(str(code))
-
-    resend.Emails.send({
-        "from": from_email,
-        "to": [professor["email"]],
-        "subject": "Código para redefinir sua senha no ROAR",
-        "html": f"""
-            <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#172b3f">
-                <h1 style="color:#1f6ce3">Recuperação de senha</h1>
-                <p>Olá, {safe_name}.</p>
-                <p>Use o código abaixo para redefinir sua senha no ROAR:</p>
-                <p style="font-size:32px;font-weight:700;letter-spacing:8px">{safe_code}</p>
-                <p>Ele expira em {RECOVERY_CODE_MINUTES} minutos.</p>
-                <p>Se você não solicitou esta alteração, ignore esta mensagem.</p>
-            </div>
-        """,
-    })
 
 
 @professores_bp.route("/senha/solicitar-recuperacao", methods=["POST"])
@@ -1571,7 +1567,7 @@ def solicitar_recuperacao_senha():
         }).eq("professor_id", professor["id"]).is_("utilizado_em", "null").execute()
 
         code = f"{secrets.randbelow(1000000):06d}"
-        _, _, pepper = _recovery_configuration()
+        _, _, _, _, pepper = _recovery_configuration()
         insertion = supabase.table("recuperacoes_senha_professor").insert({
             "professor_id": professor["id"],
             "codigo_hash": _hash_recovery_code(professor["id"], code, pepper),
@@ -1674,27 +1670,58 @@ def _latest_email_verification(professor_id):
     return result.data[0] if result.data else None
 
 
-def _send_email_verification(professor, code):
-    api_key, from_email, _ = _recovery_configuration()
-    resend.api_key = api_key
-    safe_name = html.escape(str(professor.get("nome") or "Professor"))
-    safe_code = html.escape(str(code))
+def _send_emailjs_template(template_id, template_params):
+    service_id, _, _, public_key, _ = _recovery_configuration()
 
-    resend.Emails.send({
-        "from": from_email,
-        "to": [professor["email"]],
-        "subject": "Confirme seu e-mail no ROAR",
-        "html": f"""
-            <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#172b3f">
-                <h1 style="color:#1f6ce3">Confirmação de e-mail</h1>
-                <p>Olá, {safe_name}.</p>
-                <p>Use o código abaixo para confirmar seu cadastro no ROAR:</p>
-                <p style="font-size:32px;font-weight:700;letter-spacing:8px">{safe_code}</p>
-                <p>O código expira em {EMAIL_CODE_MINUTES} minutos.</p>
-                <p>Se você não realizou este cadastro, ignore esta mensagem.</p>
-            </div>
-        """,
-    })
+    payload = {
+        "service_id": service_id,
+        "template_id": template_id,
+        "user_id": public_key,
+        "template_params": template_params,
+    }
+
+    response = requests.post(
+        "https://api.emailjs.com/api/v1.0/email/send",
+        json=payload,
+        timeout=15,
+    )
+
+    if not response.ok:
+        raise RuntimeError(
+            f"EmailJS recusou o envio (HTTP {response.status_code})."
+        )
+
+
+def _send_recovery_email(professor, code):
+    _, recovery_template_id, _, _, _ = _recovery_configuration()
+
+    _send_emailjs_template(
+        recovery_template_id,
+        {
+            "to_email": professor["email"],
+            "name": professor.get("nome") or "Professor",
+            "codigo": str(code),
+        },
+    )
+
+
+def _send_email_verification(professor, code):
+    (
+        _,
+        _,
+        verification_template_id,
+        _,
+        _,
+    ) = _recovery_configuration()
+
+    _send_emailjs_template(
+        verification_template_id,
+        {
+            "to_email": professor["email"],
+            "name": professor.get("nome") or "Professor",
+            "codigo": str(code),
+        },
+    )
 
 
 def _create_and_send_email_verification(professor):
@@ -1704,7 +1731,7 @@ def _create_and_send_email_verification(professor):
     }).eq("professor_id", professor["id"]).is_("confirmado_em", "null").execute()
 
     code = f"{secrets.randbelow(1000000):06d}"
-    _, _, pepper = _recovery_configuration()
+    _, _, _, _, pepper = _recovery_configuration()
     insertion = supabase.table("verificacoes_email_professor").insert({
         "professor_id": professor["id"],
         "codigo_hash": _hash_email_verification_code(professor["id"], code, pepper),
@@ -1733,7 +1760,7 @@ def _validate_email_verification_code(professor, code):
     if attempts >= EMAIL_CODE_MAX_ATTEMPTS:
         return None, "O limite de tentativas foi atingido. Solicite outro código."
 
-    _, _, pepper = _recovery_configuration()
+    _, _, _, _, pepper = _recovery_configuration()
     received_hash = _hash_email_verification_code(professor["id"], code, pepper)
     valid = hmac.compare_digest(received_hash, verification["codigo_hash"])
 
