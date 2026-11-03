@@ -714,13 +714,29 @@ def alterar_disponibilidade_modulo(
 
 
 
-@atividades_bp.route("/modulo/<int:modulo_id>/aluno/<int:aluno_id>", methods=["GET"])
+@atividades_bp.route("/modulo/<int:modulo_id>/me", methods=["GET"])
+@atividades_bp.route("/modulo/<int:modulo_id>/aluno/<int:aluno_id>", methods=["GET"],)
 @token_obrigatorio
-def carregar_atividades_modulo(modulo_id, aluno_id):
+def carregar_atividades_modulo(modulo_id, aluno_id=None):
     try:
-        aluno_id_autenticado, erro_acesso = validar_acesso_do_aluno(
-            aluno_id
-        )
+        if aluno_id is None:
+            # A rota /me usa o aluno identificado pelo token.
+            aluno_id_autenticado = obter_aluno_autenticado()
+
+            if not aluno_id_autenticado:
+                return resposta_erro(
+                    "Acesso permitido apenas para alunos.",
+                    "STUDENT_ACCESS_REQUIRED",
+                    403,
+                )
+        else:
+            # Mantém a validação da rota antiga.
+            aluno_id_autenticado, erro_acesso = validar_acesso_do_aluno(
+                aluno_id
+            )
+
+            if erro_acesso:
+                return erro_acesso
 
         if erro_acesso:
             return erro_acesso
