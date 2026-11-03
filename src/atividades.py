@@ -738,8 +738,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id=None):
             if erro_acesso:
                 return erro_acesso
 
-        if erro_acesso:
-            return erro_acesso
+        aluno = buscar_aluno(aluno_id_autenticado)
 
         aluno = buscar_aluno(aluno_id_autenticado)
 
