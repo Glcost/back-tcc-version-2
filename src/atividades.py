@@ -3,6 +3,8 @@ from flask import Blueprint, jsonify, request
 from auth import token_obrigatorio
 from src.bd_config import supabase
 from src.suporte_tea import buscar_nivel_suporte_tea
+from src.learning_improvements import (atomic_operation, normalize_word_evidence,
+    normalize_attempt_id, LearningUnavailable, unavailable_response)
 
 
 atividades_bp = Blueprint("atividades", __name__)
@@ -1113,128 +1115,23 @@ def registrar_progresso():
                 403,
             )
 
-        conclusao_anterior = (
-            supabase
-            .table("historico_desempenho")
-            .select("id")
-            .eq("aluno_id", aluno_id)
-            .eq("atividade_id", atividade_id)
-            .eq("concluido", True)
-            .limit(1)
-            .execute()
-        )
-
-        xp_atual = converter_inteiro(
-            aluno.get("xp_total") or 0,
-            "xp_total",
-            minimo=0,
-        )
-
-        # A atividade já foi concluída anteriormente.
-        # Não cria outro registro e não entrega XP novamente.
-        if concluido and conclusao_anterior.data:
-            return jsonify({
-                "mensagem": (
-                    "Esta atividade já estava concluída. "
-                    "Nenhum XP adicional foi concedido."
-                ),
-                "code": "ACTIVITY_ALREADY_COMPLETED",
-                "data": {
-                    "aluno_id": aluno_id,
-                    "atividade_id": atividade_id,
-                    "concluido": True,
-                    "primeira_conclusao": False,
-                    "xp_ganho": 0,
-                    "xp_total": xp_atual,
-                },
-            }), 200
-
-        historico_payload = {
-            "aluno_id": aluno_id,
-            "atividade_id": atividade_id,
-            "modo_utilizado": modo_utilizado,
-            "quantidade_erros": quantidade_erros,
-            "tempo_segundos": tempo_segundos,
-            "concluido": concluido,
-        }
-
         try:
-            (
-                supabase
-                .table("historico_desempenho")
-                .insert(historico_payload)
-                .execute()
-            )
+            palavras = normalize_word_evidence(dados.get("palavras"))
+            attempt_id = normalize_attempt_id(dados.get("id_tentativa"))
+        except ValueError as error:
+            return resposta_erro(str(error), "INVALID_WORD_EVIDENCE", 400)
 
-        except Exception as erro_insercao:
-            texto_erro = str(erro_insercao).lower()
-
-            # Quando o índice único estiver criado, duas requisições
-            # simultâneas podem disputar a primeira conclusão.
-            # Uma delas vence e a outra recebe este retorno seguro.
-            violacao_unica = (
-                "23505" in texto_erro
-                or "duplicate key" in texto_erro
-                or "unique constraint" in texto_erro
-            )
-
-            if concluido and violacao_unica:
-                aluno_atualizado = buscar_aluno(aluno_id) or aluno
-
-                return jsonify({
-                    "mensagem": (
-                        "Esta atividade já estava concluída. "
-                        "Nenhum XP adicional foi concedido."
-                    ),
-                    "code": "ACTIVITY_ALREADY_COMPLETED",
-                    "data": {
-                        "aluno_id": aluno_id,
-                        "atividade_id": atividade_id,
-                        "concluido": True,
-                        "primeira_conclusao": False,
-                        "xp_ganho": 0,
-                        "xp_total": (
-                            aluno_atualizado.get("xp_total") or 0
-                        ),
-                    },
-                }), 200
-
-            raise erro_insercao
-
-        primeira_conclusao = concluido
-        xp_ganho = 0
-        novo_xp_total = xp_atual
-
-        if primeira_conclusao:
-            xp_ganho = calcular_xp(quantidade_erros)
-            novo_xp_total = xp_atual + xp_ganho
-
-            (
-                supabase
-                .table("alunos")
-                .update({
-                    "xp_total": novo_xp_total,
-                })
-                .eq("id", aluno_id)
-                .execute()
-            )
-
-        return jsonify({
-            "mensagem": "Progresso registrado com sucesso.",
-            "code": "PROGRESS_REGISTERED",
-            "data": {
-                "aluno_id": aluno_id,
-                "atividade_id": atividade_id,
-                "concluido": concluido,
-                "primeira_conclusao": primeira_conclusao,
-                "xp_ganho": xp_ganho,
-                "xp_total": novo_xp_total,
-            },
-        }), 201
-
+        result = atomic_operation("roar_register_progress", {
+            "p_aluno_id": aluno_id, "p_atividade_id": atividade_id,
+            "p_quantidade_erros": quantidade_erros, "p_tempo_segundos": tempo_segundos,
+            "p_concluido": concluido, "p_id_tentativa": attempt_id, "p_palavras": palavras,
+        })
+        status = result.pop("status", 200)
+        return jsonify(result), status
+    except LearningUnavailable:
+        return unavailable_response()
     except Exception:
         return resposta_erro(
             "Não foi possível salvar o progresso da atividade.",
-            "PROGRESS_SAVE_ERROR",
-            500,
+            "PROGRESS_SAVE_ERROR", 500,
         )

@@ -857,116 +857,38 @@ def obter_perfil_gameplay(aluno_id):
 
 
 @alunos_bp.route('/desempenho', methods=['POST'])
+@token_obrigatorio
 def salvar_desempenho():
-    try:
-        dados = request.get_json(silent=True)
-        # ... (validações existentes) ...
+    """Compatibility endpoint: same authorization and transaction as progress."""
+    from src.atividades import registrar_progresso
+    return registrar_progresso()
 
-        payload_insercao = {
-            'aluno_id': int(dados.get('aluno_id')),
-            'atividade_id': int(dados.get('atividade_id')),
-            'modo_utilizado': str(dados.get('modo_utilizado')).strip(),
-            'quantidade_erros': int(dados.get('quantidade_erros')),
-            'tempo_segundos': int(dados.get('tempo_segundos')),
-            'concluido': bool(dados.get('concluido'))
-        }
-
-        # 1. Salva o histórico de telemetria
-        busca = supabase.table('historico_desempenho').insert(payload_insercao).execute()
-
-        # 2. Calcula e incrementa XP no perfil do aluno se concluído com sucesso
-        if dados.get('concluido'):
-            xp_ganho = max(10, 50 - (int(dados.get('quantidade_erros')) * 5))
-            
-            # Busca XP atual do aluno
-            aluno = supabase.table('alunos').select('xp_total').eq('id', dados.get('aluno_id')).execute()
-            xp_atual = aluno.data[0].get('xp_total', 0) if aluno.data else 0
-            
-            # Atualiza total
-            supabase.table('alunos').update({'xp_total': xp_atual + xp_ganho}).eq('id', dados.get('aluno_id')).execute()
-
-        return jsonify({"mensagem": "Telemetria e progresso atualizados com sucesso!"}), 201
-
-    except Exception as e:
-        return jsonify({"erro": f"Erro de persistência: {str(e)}"}), 500
-    
-    
 
 @alunos_bp.route('/loja-lex', methods=['GET', 'POST'])
 @token_obrigatorio
 def loja_lex():
+    from src.learning_improvements import atomic_operation, LearningUnavailable, unavailable_response
+    usuario_id = getattr(request, 'aluno_id', None)
+    if not usuario_id:
+        return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
     try:
-        # CORRIGIDO: Obtém o ID do aluno injetado pelo decorador @token_obrigatorio no objeto request
-        usuario_id = getattr(request, 'aluno_id', None)
-        if not usuario_id:
-            return jsonify({"erro": "Acesso permitido apenas para estudantes.", "code": "FORBIDDEN"}), 403
-
-        # Permite requisições GET para a loja consultar o XP atualizado
         if request.method == 'GET':
-            res_aluno = supabase.table('alunos').select('xp_total').eq('id', usuario_id).execute()
-            if not res_aluno.data:
-                return jsonify({"erro": "Aluno não encontrado."}), 404
-            return jsonify({"xp_atual": res_aluno.data[0].get('xp_total', 0)}), 200
-
-        # Lógica de POST (comprar e equipar)
-        dados = request.get_json() or {}
-        acao = dados.get('acao')
-        raw_skin_id = dados.get('skin_id')
-
-        if not acao or raw_skin_id is None:
-            return jsonify({"erro": "Os campos 'acao' e 'skin_id' são obrigatórios."}), 400
-
-        skin_id = int(raw_skin_id)
-
-        # 1. Busca aluno no Supabase
-        res_aluno = supabase.table('alunos').select('*').eq('id', usuario_id).execute()
-        if not res_aluno.data:
-            return jsonify({"erro": "Aluno não encontrado no sistema."}), 404
-
-        aluno = res_aluno.data[0]
-        xp_atual = int(aluno.get('xp_total') or 0)
-
-        # 2. Busca skin na tabela skins_lex
-        res_skin = supabase.table('skins_lex').select('*').eq('id', skin_id).execute()
-        if not res_skin.data:
-            return jsonify({"erro": "Skin não encontrada no catálogo."}), 404
-
-        skin = res_skin.data[0]
-        preco = int(skin.get('preco_xp') or 0)
-
-        if acao == 'comprar':
-            if xp_atual < preco:
-                return jsonify({
-                    "erro": f"XP insuficiente. Você possui {xp_atual} XP, mas a skin custa {preco} XP."
-                }), 400
-
-            novo_xp = xp_atual - preco
-
-            # Atualiza saldo de XP
-            supabase.table('alunos').update({'xp_total': novo_xp}).eq('id', usuario_id).execute()
-
-            # Registra no inventário
-            supabase.table('aluno_skins_lex').upsert({
-                'aluno_id': usuario_id,
-                'skin_id': skin_id
-            }, on_conflict='aluno_id, skin_id').execute()
-
-            # Define skin ativa
-            supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
-
-            return jsonify({
-                "mensagem": f"Parabéns! Você adotou o {skin.get('nome')}!",
-                "xp_restante": novo_xp
-            }), 200
-
-        elif acao == 'equipar':
-            supabase.table('alunos').update({'skin_ativa_id': skin_id}).eq('id', usuario_id).execute()
-            return jsonify({
-                "mensagem": f"{skin.get('nome')} equipado com sucesso!"
-            }), 200
-
-        return jsonify({"erro": "Ação inválida."}), 400
-
-    except Exception as e:
-        current_app.logger.exception("Erro na rota /loja-lex")
-        return jsonify({"erro": f"Erro interno do servidor: {str(e)}"}), 500
+            result = atomic_operation('roar_shop_transaction', {
+                'p_aluno_id': usuario_id, 'p_acao': 'consultar', 'p_skin_id': None,
+            })
+        else:
+            dados = request.get_json(silent=True)
+            if not isinstance(dados, dict) or dados.get('acao') not in ('comprar', 'equipar'):
+                return jsonify({"erro": "Informe uma ação válida.", "code": "INVALID_SHOP_ACTION"}), 400
+            skin_id = dados.get('skin_id')
+            if isinstance(skin_id, str) and skin_id.isdigit():
+                skin_id = int(skin_id)
+            if type(skin_id) is not int or skin_id < 1:
+                return jsonify({"erro": "Informe um Dino válido.", "code": "INVALID_SKIN_ID"}), 400
+            result = atomic_operation('roar_shop_transaction', {
+                'p_aluno_id': usuario_id, 'p_acao': dados['acao'], 'p_skin_id': skin_id,
+            })
+        status = result.pop('status', 200)
+        return jsonify(result), status
+    except LearningUnavailable:
+        return unavailable_response()

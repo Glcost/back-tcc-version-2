@@ -313,6 +313,78 @@ paths:
         '500':
           description: Erro interno
 
+  /alunos/preferencias-jogos:
+    get:
+      tags: [Alunos]
+      summary: Consulta as preferências dos jogos do aluno autenticado
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Preferências individuais ou padrões
+        '503':
+          description: Migração ou cliente administrativo indisponível
+  /professores/alunos/{aluno_id}/preferencias-jogos:
+    parameters:
+      - name: aluno_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+    get:
+      tags: [Professores]
+      summary: Consulta preferências de um aluno do professor autenticado
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Preferências individuais ou padrões}
+        '403': {description: Aluno não pertence ao professor}
+    patch:
+      tags: [Professores]
+      summary: Altera preferências individuais sem modificar o nível TEA
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                pieceCount: {type: integer, nullable: true, enum: [null, 2, 4, 6]}
+                showHints: {type: boolean}
+                memoryPreviewSeconds: {type: integer, enum: [3, 5, 8, 10]}
+                advanceDelaySeconds: {type: integer, enum: [1, 2, 3, 5]}
+      responses:
+        '200': {description: Preferências salvas}
+        '400': {description: Dados inválidos}
+        '403': {description: Aluno não pertence ao professor}
+        '503': {description: Migração ou cliente administrativo indisponível}
+  /relatorios/aluno/{aluno_id}/palavras:
+    get:
+      tags: [Relatorios]
+      summary: Evidências reais por palavra do aluno ou de seu professor
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: aluno_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      responses:
+        '200': {description: Lista de palavras com acertos, erros, ajudas e última prática}
+        '403': {description: Acesso não autorizado ao aluno}
+        '503': {description: Migração ou cliente administrativo indisponível}
+  /alunos/desempenho:
+    post:
+      tags: [Alunos]
+      summary: Compatibilidade com o salvamento autenticado de progresso
+      deprecated: true
+      description: Usa a mesma transação de /atividades/progresso. O aluno é identificado pelo token.
+      security: [{bearerAuth: []}]
+      responses:
+        '201': {description: Progresso salvo com recompensa atômica}
+        '200': {description: Repetição idempotente ou revisão sem XP adicional}
+        '401': {description: Token ausente ou inválido}
+        '403': {description: Tentativa de registrar para outro aluno}
+        '503': {description: Migração ou cliente administrativo indisponível}
+
 components:
   securitySchemes:
     bearerAuth:

@@ -9,6 +9,7 @@ from src.aluno import alunos_bp
 from src.professora import professores_bp
 from src.atividades import atividades_bp
 from src.relatorios import relatorios_bp
+from src.learning_improvements import learning_bp
 
 
 load_dotenv()
@@ -30,13 +31,14 @@ app.register_blueprint(professores_bp, url_prefix='/professores')
 app.register_blueprint(alunos_bp, url_prefix='/alunos')
 app.register_blueprint(atividades_bp, url_prefix='/atividades')
 app.register_blueprint(relatorios_bp, url_prefix='/relatorios')
+app.register_blueprint(learning_bp)
 
 @app.route('/', methods=['GET'])
 def index():
     return jsonify({
         "status": "online",
         "projeto": "Roar API",
-        "versao": "2.0.6"
+        "versao": "2.1.0"
     }), 200
 
 
