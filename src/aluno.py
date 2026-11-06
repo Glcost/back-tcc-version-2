@@ -788,7 +788,14 @@ def resgatar_recompensa_missao():
         }), 500
 
 @alunos_bp.route('/perfil/<int:aluno_id>', methods=['GET'])
+@token_obrigatorio
 def obter_perfil_gameplay(aluno_id):
+    # Esta rota só permite que um aluno consulte o próprio perfil.
+    if request.perfil != "aluno" or request.aluno_id != aluno_id:
+        return jsonify({
+            "erro": "Você não tem permissão para acessar este perfil.",
+            "code": "FORBIDDEN",
+        }), 403
     try:
         # 1. Busca dados do aluno
         aluno_res = supabase.table('alunos') \
@@ -858,39 +865,13 @@ def obter_perfil_gameplay(aluno_id):
 
 @alunos_bp.route('/desempenho', methods=['POST'])
 def salvar_desempenho():
-    try:
-        dados = request.get_json(silent=True)
-        # ... (validações existentes) ...
-
-        payload_insercao = {
-            'aluno_id': int(dados.get('aluno_id')),
-            'atividade_id': int(dados.get('atividade_id')),
-            'modo_utilizado': str(dados.get('modo_utilizado')).strip(),
-            'quantidade_erros': int(dados.get('quantidade_erros')),
-            'tempo_segundos': int(dados.get('tempo_segundos')),
-            'concluido': bool(dados.get('concluido'))
-        }
-
-        # 1. Salva o histórico de telemetria
-        busca = supabase.table('historico_desempenho').insert(payload_insercao).execute()
-
-        # 2. Calcula e incrementa XP no perfil do aluno se concluído com sucesso
-        if dados.get('concluido'):
-            xp_ganho = max(10, 50 - (int(dados.get('quantidade_erros')) * 5))
-            
-            # Busca XP atual do aluno
-            aluno = supabase.table('alunos').select('xp_total').eq('id', dados.get('aluno_id')).execute()
-            xp_atual = aluno.data[0].get('xp_total', 0) if aluno.data else 0
-            
-            # Atualiza total
-            supabase.table('alunos').update({'xp_total': xp_atual + xp_ganho}).eq('id', dados.get('aluno_id')).execute()
-
-        return jsonify({"mensagem": "Telemetria e progresso atualizados com sucesso!"}), 201
-
-    except Exception as e:
-        return jsonify({"erro": f"Erro de persistência: {str(e)}"}), 500
-    
-    
+    """Endpoint legado desativado; use /atividades/progresso."""
+    return jsonify({
+        "erro": (
+            "Esta rota foi desativada. Use o endpoint de progresso de atividades."
+        ),
+        "code": "LEGACY_PERFORMANCE_ENDPOINT_DISABLED",
+    }), 410
 
 @alunos_bp.route('/loja-lex', methods=['GET', 'POST'])
 @token_obrigatorio

@@ -1185,6 +1185,18 @@ def apagar_aluno(aluno_id):
 @token_obrigatorio
 def obter_desempenho_aluno(aluno_id):
     try:
+        professor_id = getattr(request, "professor_id", None)
+        if not professor_id:
+            return jsonify({
+                "erro": "Acesso permitido apenas para professores.",
+                "code": "FORBIDDEN",
+            }), 403
+
+        if not verificar_professor_aluno(aluno_id, professor_id):
+            return jsonify({
+                "erro": "Acesso não autorizado a este aluno.",
+                "code": "FORBIDDEN",
+            }), 403
         # 1. BUSCA NA TABELA CORRETA: historico_desempenho
         # .order('data_hora', desc=True) garante que os relatórios mais novos fiquem no topo da dashboard
         busca = supabase.table('historico_desempenho') \
@@ -1413,6 +1425,18 @@ def estatisticas_dashboard(professor_id):
 @token_obrigatorio
 def obter_perfil_aluno(aluno_id):
     try:
+        professor_id = getattr(request, "professor_id", None)
+        if not professor_id:
+            return jsonify({
+                "erro": "Acesso permitido apenas para professores.",
+                "code": "FORBIDDEN",
+            }), 403
+
+        if not verificar_professor_aluno(aluno_id, professor_id):
+            return jsonify({
+                "erro": "Acesso não autorizado a este aluno.",
+                "code": "FORBIDDEN",
+            }), 403
         busca = supabase.table('alunos').select('id', 'nome', 'modo_aprendizagem').eq('id', aluno_id).execute()
         if len(busca.data) == 0:
             return jsonify({"erro": "Aluno não encontrado"}), 404
