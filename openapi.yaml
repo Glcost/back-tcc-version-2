@@ -385,6 +385,46 @@ paths:
         '403': {description: Tentativa de registrar para outro aluno}
         '503': {description: Migração ou cliente administrativo indisponível}
 
+  /professores/alunos/{aluno_id}/exportacao-dados:
+    post:
+      tags: [Professores]
+      summary: Exportar cadastro e histórico após verificação manual do solicitante
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: aluno_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [solicitante, verificacao_confirmada]
+              properties:
+                solicitante: {type: string, enum: [titular, responsavel]}
+                verificacao_confirmada: {type: boolean, enum: [true]}
+      responses:
+        '200':
+          description: Cadastro atual, suporte TEA e histórico do aluno. Resposta sem cache e sem credenciais.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [versao, exportacao, cadastro, historico_atividades]
+                properties:
+                  versao: {type: integer, enum: [1]}
+                  exportacao: {type: object}
+                  cadastro: {type: object}
+                  historico_atividades: {type: array, items: {type: object}}
+        '400': {description: Confirmação ausente ou corpo inválido}
+        '401': {description: Token ausente ou inválido}
+        '403': {description: Perfil sem permissão ou aluno de outro professor}
+        '422': {description: Histórico excede o limite de 50000 registros}
+        '503': {description: Exportação indisponível, sem resposta parcial}
+
 components:
   securitySchemes:
     bearerAuth:
