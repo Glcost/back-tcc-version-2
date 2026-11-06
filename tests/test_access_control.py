@@ -23,6 +23,7 @@ class Query:
         self.db, self.table = db, table
         self.filters, self.columns, self.operation = [], '*', 'select'
         self.payload, self.single_row, self.maximum, self.sort = None, False, None, None
+        self.ignore_duplicates = False
 
     def select(self, columns='*', **kwargs): self.columns=columns; return self
     def eq(self, key, value): self.filters.append((key,lambda item:item==value)); return self
@@ -39,7 +40,10 @@ class Query:
     def insert(self, payload): self.operation,self.payload='insert',payload; return self
     def update(self, payload): self.operation,self.payload='update',payload; return self
     def delete(self): self.operation='delete'; return self
-    def upsert(self, payload, **kwargs): self.operation,self.payload='upsert',payload; return self
+    def upsert(self, payload, **kwargs):
+        self.operation,self.payload='upsert',payload
+        self.ignore_duplicates=kwargs.get('ignore_duplicates',False)
+        return self
 
     def execute(self):
         self.db.calls.append((self.table,self.operation))
@@ -52,6 +56,8 @@ class Query:
             rows=[]
             for payload in payloads:
                 item=deepcopy(payload)
+                if self.ignore_duplicates and any(row.get('id')==item.get('id') for row in table):
+                    continue
                 if self.operation=='insert': item.setdefault('id',max([row.get('id',0) for row in table]+[0])+1)
                 if self.table=='alunos':
                     item.setdefault('ativo',True); item.setdefault('xp_total',0); item.setdefault('skin_ativa_id',1)
@@ -95,7 +101,7 @@ class AccessControlTests(unittest.TestCase):
     def setUpClass(cls):
         cls.db=Database()
         names=['src.bd_config','src.suporte_tea','src.learning_improvements','src.aluno','src.professora',
-               'src.atividades','src.relatorios','src.privacidade','src.assistente_ia']
+               'src.atividades','src.relatorios','src.privacidade','src.solicitacoes_dados','src.assistente_ia']
         previous={name:sys.modules.get(name) for name in names}
         for name in names: sys.modules.pop(name,None)
         replacements={'src.bd_config':SimpleNamespace(supabase=cls.db,supabase_admin=cls.db),
@@ -157,7 +163,8 @@ class AccessControlTests(unittest.TestCase):
             if not rule.rule.startswith(('/professores/','/alunos/','/atividades/','/relatorios/')) or rule.endpoint in public:
                 continue
             url=rule.rule
-            for argument in rule.arguments: url=url.replace(f'<int:{argument}>','17')
+            for argument in rule.arguments:
+                url=url.replace(f'<int:{argument}>','17').replace(f'<uuid:{argument}>','00000000-0000-4000-8000-000000000001')
             for method in rule.methods-{'HEAD','OPTIONS'}:
                 with self.subTest(url=url,method=method):
                     response=self.client.open(url,method=method,json={})

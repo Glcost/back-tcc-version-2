@@ -11,6 +11,7 @@ from src.atividades import atividades_bp
 from src.relatorios import relatorios_bp
 from src.learning_improvements import learning_bp
 from src.privacidade import privacidade_bp
+from src.solicitacoes_dados import solicitacoes_bp
 
 
 load_dotenv()
@@ -34,6 +35,7 @@ app.register_blueprint(atividades_bp, url_prefix='/atividades')
 app.register_blueprint(relatorios_bp, url_prefix='/relatorios')
 app.register_blueprint(learning_bp)
 app.register_blueprint(privacidade_bp)
+app.register_blueprint(solicitacoes_bp)
 
 
 @app.after_request

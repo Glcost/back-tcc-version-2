@@ -49,12 +49,24 @@ anônimo às tabelas pessoais não é a correção prevista.
 
 ## Evidências e testes
 
+Aplicação em produção concluída em 06/11/2026. A consulta de metadados confirmou
+20 tabelas protegidas pela migração de segurança, zero sem RLS e zero com
+SELECT anônimo ou UPDATE de clientes autenticados. O advisor passou a retornar
+somente avisos informativos de RLS sem políticas, intencionais neste modelo.
+O fluxo de solicitações adiciona outras duas tabelas privadas por migração própria.
+
+Foram executadas 35 verificações na API antes da restrição e 48 depois, com
+duas turmas e contas inteiramente fictícias. Incluíram login, conteúdo,
+relatórios, JSON/PDF, preferências, progresso sem XP duplicado e bloqueio de
+alunos desativados. As contas temporárias foram removidas e a ausência delas
+foi confirmada, sem excluir ou exportar cadastros reais.
+
 - `tests/test_access_control.py`: aplicação e blueprints reais, JWTs reais,
   banco simulado e duas turmas fictícias. Inclui login, lista, leitura própria,
   bloqueio entre turmas, edição, desativação, PIN, relatórios, exportações,
   progresso legado, tokens inválidos e alunos desativados.
-- A suíte completa contém 63 testes: 59 executados com sucesso no ambiente
-  usado e quatro testes de concorrência não executados por falta de um
+- A suíte da entrega de segurança continha 63 testes: 59 executados com sucesso
+  e quatro testes de concorrência não executados por falta de um
   PostgreSQL local descartável. Esses quatro não usam o banco hospedado.
 - `tools/check_database_access.cjs`, no frontend: PostgreSQL em memória com
   PGlite. Verifica a migração duas vezes, negação de tabelas, sequências e RPCs

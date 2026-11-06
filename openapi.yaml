@@ -6,7 +6,7 @@ info:
 servers:
   - url: http://localhost:5000
     description: Servidor de Desenvolvimento Local
-  - url: https://roar-backend.vercel.app
+  - url: https://back-tcc-version-2.vercel.app
     description: Servidor de Produção (Vercel)
 
 tags:
@@ -18,6 +18,8 @@ tags:
     description: Motor do jogo e listagem de conteúdos pedagógicos
   - name: Relatorios
     description: Módulo de BI - agregações e dashboards de desempenho
+  - name: Privacidade
+    description: Exportações assistidas e acompanhamento de solicitações de dados
 
 paths:
   # --- TAG: ALUNOS ---
@@ -458,6 +460,107 @@ paths:
         '403': {description: Perfil sem permissão ou aluno de outro professor}
         '422': {description: Histórico excede 500 registros. Usar a exportação JSON}
         '503': {description: Falha na consulta ou geração. Nenhum PDF parcial é entregue}
+
+  /privacidade/atendimento:
+    get:
+      tags: [Privacidade]
+      summary: Consultar disponibilidade, responsável e canal oficial
+      description: Disponível somente quando a instituição configura os três parâmetros de atendimento. Não retorna dados de alunos.
+      responses:
+        '200':
+          description: Configuração pública do atendimento, sem cache
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  disponivel: {type: boolean}
+                  responsavel: {type: string, nullable: true}
+                  contato: {type: string, nullable: true}
+  /alunos/solicitacoes-dados:
+    get:
+      tags: [Privacidade]
+      summary: Aluno ativo acompanha somente seus próprios pedidos
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: antes, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        '200': {description: Até 50 solicitações com protocolo e eventos, e proximo_cursor para continuar}
+        '400': {description: Cursor ou parâmetro inválido}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Perfil incorreto ou conta desativada}
+        '503': {description: Armazenamento indisponível}
+  /professores/alunos/{aluno_id}/solicitacoes-dados:
+    parameters:
+      - {name: aluno_id, in: path, required: true, schema: {type: integer, minimum: 1}}
+    get:
+      tags: [Privacidade]
+      summary: Professor acompanha os pedidos de um aluno vinculado
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: antes, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        '200': {description: Até 50 solicitações com protocolo, eventos e proximo_cursor}
+        '400': {description: Cursor ou parâmetro inválido}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Perfil incorreto ou aluno de outra turma}
+        '503': {description: Armazenamento indisponível}
+    post:
+      tags: [Privacidade]
+      summary: Registrar pedido verificado sem executar correção ou exclusão
+      description: O cliente mantém o mesmo UUID v4 ao repetir uma tentativa sem resposta. O servidor nunca sobrescreve um pedido já registrado. Exige atendimento institucional configurado.
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, tipo, descricao, solicitante, verificacao_confirmada]
+              properties:
+                id: {type: string, format: uuid}
+                tipo: {type: string, enum: [correcao, exclusao]}
+                descricao: {type: string, minLength: 10, maxLength: 2000}
+                solicitante: {type: string, enum: [titular, responsavel]}
+                verificacao_confirmada: {type: boolean, enum: [true]}
+      responses:
+        '201': {description: Solicitação recebida com protocolo e evento de abertura}
+        '200': {description: Mesma solicitação já registrada, sem duplicação}
+        '400': {description: Campos ou confirmação inválidos}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Perfil incorreto ou aluno de outra turma}
+        '409': {description: Identificador utilizado em outro pedido}
+        '503': {description: Atendimento não configurado ou armazenamento indisponível}
+  /professores/alunos/{aluno_id}/solicitacoes-dados/{solicitacao_id}:
+    patch:
+      tags: [Privacidade]
+      summary: Iniciar análise ou registrar resposta final visível ao aluno
+      description: Versão obrigatória para evitar sobrescrita. Um pedido respondido não pode ser reaberto. A rota registra a decisão, sem alterar ou excluir dados do aluno.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: aluno_id, in: path, required: true, schema: {type: integer, minimum: 1}}
+        - {name: solicitacao_id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, resposta, versao]
+              properties:
+                status: {type: string, enum: [em_analise, respondida]}
+                resposta: {type: string, maxLength: 2000, description: Vazia ao iniciar análise; mínimo 10 caracteres para resposta final}
+                versao: {type: integer, minimum: 1}
+      responses:
+        '200': {description: Status e evento registrados na mesma transação}
+        '400': {description: Campos ou resposta inválidos}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Perfil incorreto ou aluno de outra turma}
+        '404': {description: Solicitação indisponível para o aluno}
+        '409': {description: Versão desatualizada, transição repetida ou pedido já respondido}
+        '503': {description: Atendimento não configurado ou armazenamento indisponível}
 
 components:
   securitySchemes:
