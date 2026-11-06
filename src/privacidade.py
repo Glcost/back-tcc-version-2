@@ -1,9 +1,10 @@
 """Teacher-assisted export of one student's registration and activity history."""
 
 from datetime import datetime, timezone
+from io import BytesIO
 from uuid import uuid4
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
 
 from auth import token_obrigatorio
 from src.bd_config import supabase_admin
@@ -20,13 +21,15 @@ HISTORICO_FIELDS = (
 )
 PAGE_SIZE = 500
 MAX_HISTORY_ROWS = 50000
+MAX_PDF_HISTORY_ROWS = 500
 
 
 class HistoricoMuitoGrande(RuntimeError):
     pass
 
 
-def buscar_historico_exportacao(database, aluno_id):
+def buscar_historico_exportacao(database, aluno_id, max_rows=None):
+    max_rows = MAX_HISTORY_ROWS if max_rows is None else max_rows
     # Freeze the upper ID so new attempts cannot extend pagination indefinitely.
     ultima = (
         database.table("historico_desempenho").select("id")
@@ -45,7 +48,7 @@ def buscar_historico_exportacao(database, aluno_id):
         ).data or []
         if not pagina:
             break
-        if len(historico) + len(pagina) > MAX_HISTORY_ROWS:
+        if len(historico) + len(pagina) > max_rows:
             raise HistoricoMuitoGrande()
         proximo_cursor = pagina[-1]["id"]
         if proximo_cursor <= cursor:
@@ -68,6 +71,16 @@ def proteger_resposta(response):
 @privacidade_bp.route("/professores/alunos/<int:aluno_id>/exportacao-dados", methods=["POST"])
 @token_obrigatorio
 def exportar_dados_aluno(aluno_id):
+    return _exportar_dados(aluno_id)
+
+
+@privacidade_bp.route("/professores/alunos/<int:aluno_id>/relatorio-dados.pdf", methods=["POST"])
+@token_obrigatorio
+def exportar_relatorio_pdf(aluno_id):
+    return _exportar_dados(aluno_id, formato_pdf=True)
+
+
+def _exportar_dados(aluno_id, formato_pdf=False):
     professor_id = getattr(request, "professor_id", None)
     if not professor_id:
         return jsonify(erro="A exportação deve ser realizada pelo professor da turma.",
@@ -99,9 +112,10 @@ def exportar_dados_aluno(aluno_id):
             .eq("aluno_id", aluno_id).limit(1).execute()
         ).data or []
         cadastro["nivel_suporte_tea"] = suporte[0].get("nivel_suporte_tea") if suporte else None
-        historico = buscar_historico_exportacao(supabase_admin, aluno_id)
+        historico = buscar_historico_exportacao(supabase_admin, aluno_id,
+                      max_rows=MAX_PDF_HISTORY_ROWS if formato_pdf else MAX_HISTORY_ROWS)
         identificador = str(uuid4())
-        response = jsonify({
+        exportacao = {
             "versao": 1,
             "exportacao": {
                 "id": identificador,
@@ -114,12 +128,23 @@ def exportar_dados_aluno(aluno_id):
             },
             "cadastro": cadastro,
             "historico_atividades": historico,
-        })
-        response.headers["Content-Disposition"] = f'attachment; filename="roar-aluno-{aluno_id}.json"'
+        }
+        if formato_pdf:
+            from src.relatorio_dados_pdf import buscar_catalogo_relatorio, gerar_relatorio_pdf
+            atividades, modulos = buscar_catalogo_relatorio(supabase_admin, historico)
+            arquivo = gerar_relatorio_pdf(exportacao, atividades, modulos)
+            response = send_file(BytesIO(arquivo), mimetype='application/pdf', as_attachment=True,
+                                 download_name=f'roar-relatorio-aluno-{aluno_id}.pdf')
+        else:
+            response = jsonify(exportacao)
+            response.headers["Content-Disposition"] = f'attachment; filename="roar-aluno-{aluno_id}.json"'
         current_app.logger.info("Exportacao de dados gerada id=%s professor_id=%s aluno_id=%s",
                                 identificador, professor_id, aluno_id)
         return response, 200
     except HistoricoMuitoGrande:
+        if formato_pdf:
+            return jsonify(erro="O PDF atende até 500 registros. Use a exportação JSON para históricos maiores.",
+                           code="PDF_HISTORY_TOO_LARGE"), 422
         return jsonify(erro="O histórico excede o tamanho atendido por esta exportação.",
                        code="EXPORT_HISTORY_TOO_LARGE"), 422
     except Exception:

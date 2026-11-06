@@ -425,6 +425,40 @@ paths:
         '422': {description: Histórico excede o limite de 50000 registros}
         '503': {description: Exportação indisponível, sem resposta parcial}
 
+  /professores/alunos/{aluno_id}/relatorio-dados.pdf:
+    post:
+      tags: [Professores]
+      summary: Gerar relatório PDF do aluno após verificação manual do solicitante
+      description: Usa o mesmo controle de acesso da exportação JSON. Inclui cadastro atual, resumo dos registros, nomes das atividades e módulos, histórico e identificação da emissão. Até 500 registros, sem truncar. Geração em memória, sem armazenamento no servidor.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: aluno_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [solicitante, verificacao_confirmada]
+              properties:
+                solicitante: {type: string, enum: [titular, responsavel]}
+                verificacao_confirmada: {type: boolean, enum: [true]}
+      responses:
+        '200':
+          description: Download PDF com paginação e resposta privada sem cache. Sem PIN ou credenciais.
+          content:
+            application/pdf:
+              schema: {type: string, format: binary}
+        '400': {description: Confirmação ausente ou corpo inválido}
+        '401': {description: Token ausente ou inválido}
+        '403': {description: Perfil sem permissão ou aluno de outro professor}
+        '422': {description: Histórico excede 500 registros. Usar a exportação JSON}
+        '503': {description: Falha na consulta ou geração. Nenhum PDF parcial é entregue}
+
 components:
   securitySchemes:
     bearerAuth:

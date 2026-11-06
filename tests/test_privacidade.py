@@ -1,5 +1,6 @@
 """Verify real export routes with Flask/JWT and an in-memory database."""
 import importlib.util
+from io import BytesIO
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from flask import Flask
+from pypdf import PdfReader
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -31,6 +33,10 @@ class Query:
 
     def gt(self, key, value):
         self.filters.append((key, lambda actual: actual > value))
+        return self
+
+    def in_(self, key, values):
+        self.filters.append((key, lambda actual: actual in values))
         return self
 
     def lte(self, key, value):
@@ -65,6 +71,8 @@ class Database:
                 {'id': 1, 'aluno_id': 17, 'atividade_id': 3, 'quantidade_erros': 0},
                 {'id': 2, 'aluno_id': 18, 'atividade_id': 4, 'segredo': 'other student'},
             ],
+            'atividades': [{'id': 3, 'modulo_id': 1, 'palavra_chave': 'HEAD', 'ordem_sequencia': 3}],
+            'modulos': [{'id': 1, 'nome': 'Corpo Humano'}],
         }
         self.reads = []
         self.selections = []
@@ -92,6 +100,7 @@ class PrivacyTests(unittest.TestCase):
         self.client = self.app.test_client()
         self.body = {'solicitante': 'responsavel', 'verificacao_confirmada': True}
         self.url = '/professores/alunos/17/exportacao-dados'
+        self.pdf_url = '/professores/alunos/17/relatorio-dados.pdf'
 
     def headers(self, profile='professor', identifier=5):
         with self.app.app_context():
@@ -177,6 +186,99 @@ class PrivacyTests(unittest.TestCase):
             response = self.client.post(self.url, json=self.body, headers=self.headers())
         self.assertEqual(response.status_code, 422)
         self.assertNotIn('cadastro', response.json)
+
+    def pdf_text(self, response):
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'application/pdf')
+        return '\n'.join(page.extract_text() for page in PdfReader(BytesIO(response.data)).pages)
+
+    def test_pdf_requires_teacher_ownership_and_verification_before_reading_history(self):
+        for headers, body, status in [
+            ({}, self.body, 401), (self.headers('aluno', 17), self.body, 403),
+            (self.headers(), {**self.body, 'verificacao_confirmada': False}, 400),
+            (self.headers(), {**self.body, 'professor_id': 6}, 400),
+        ]:
+            response = self.client.post(self.pdf_url, json=body, headers=headers)
+            self.assertEqual(response.status_code, status)
+            self.assertIn('no-store', response.headers['Cache-Control'])
+        self.assertEqual(self.database.reads, [])
+        response = self.client.post(self.pdf_url, json=self.body, headers=self.headers(identifier=6))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.database.reads, ['alunos'])
+
+    def test_pdf_has_readable_names_no_credentials_and_only_the_selected_student(self):
+        self.database.tables['alunos'][0]['nome'] = 'João <b>Teste</b> & Família'
+        self.database.tables['historico_desempenho'][0].update(
+            concluido=True, tempo_segundos=10, data_hora='2026-11-06T16:00:00Z', modo_utilizado='Nível 2')
+        response = self.client.post(self.pdf_url, json=self.body, headers=self.headers())
+        text = self.pdf_text(response)
+        for expected in ['João <b>Teste</b> & Família', 'HEAD', 'Corpo Humano', '10 s',
+                         '06/11/2026 13:00', 'Concluída', 'Nível 2', 'Identificação da emissão']:
+            self.assertIn(expected, text)
+        for forbidden in ['secret-pin', 'pin_acesso', 'other student', 'secret connection data']:
+            self.assertNotIn(forbidden, text)
+        self.assertEqual(response.headers['Cache-Control'], 'no-store, private')
+        self.assertIn('roar-relatorio-aluno-17.pdf', response.headers['Content-Disposition'])
+        self.assertTrue(all('*' not in fields for _, fields in self.database.selections))
+
+    def test_pdf_explicit_empty_history_missing_support_and_deleted_catalog(self):
+        self.database.tables['aluno_suporte_tea'] = []
+        self.database.tables['historico_desempenho'] = []
+        response = self.client.post(self.pdf_url, json=self.body, headers=self.headers())
+        text = self.pdf_text(response)
+        self.assertIn('Ainda não há atividades registradas', text)
+        self.assertIn('Não informado', text)
+        self.assertNotIn('atividades', self.database.reads)
+        self.database.tables['historico_desempenho'] = [{'id': 1, 'aluno_id': 17, 'atividade_id': 999}]
+        text = self.pdf_text(self.client.post(self.pdf_url, json=self.body, headers=self.headers()))
+        self.assertIn('Atividade sem título (código 999)', text)
+        self.assertIn('Não informada', text)
+
+    def test_pdf_multi_page_keeps_all_rows_and_repeats_headers(self):
+        self.database.tables['historico_desempenho'] = [
+            {'id': index, 'aluno_id': 17, 'atividade_id': 3, 'concluido': True,
+             'modo_utilizado': f'Tentativa de teste {index}', 'quantidade_erros': 0,
+             'tempo_segundos': 10, 'data_hora': '2026-11-06T16:00:00Z'} for index in range(1, 61)
+        ]
+        response = self.client.post(self.pdf_url, json=self.body, headers=self.headers())
+        self.assertEqual(response.status_code, 200)
+        reader = PdfReader(BytesIO(response.data))
+        self.assertGreater(len(reader.pages), 1)
+        text = '\n'.join(page.extract_text() for page in reader.pages)
+        for index in range(1, 61):
+            self.assertIn(f'Tentativa de teste {index}\n', text)
+        for page in reader.pages:
+            page_text = page.extract_text()
+            self.assertIn('Página', page_text)
+            if 'Tentativa de teste' in page_text:
+                self.assertIn('Atividade / módulo', page_text)
+
+    def test_pdf_catalog_paginates_and_failures_never_return_a_partial_document(self):
+        self.database.server_page_size = 1
+        self.database.tables['historico_desempenho'].append({'id': 3, 'aluno_id': 17, 'atividade_id': 4})
+        self.database.tables['atividades'].append({'id': 4, 'modulo_id': 2, 'palavra_chave': 'COW'})
+        self.database.tables['modulos'].append({'id': 2, 'nome': 'Animais da Fazenda'})
+        text = self.pdf_text(self.client.post(self.pdf_url, json=self.body, headers=self.headers()))
+        self.assertIn('HEAD', text)
+        self.assertIn('COW', text)
+        self.assertIn('Animais da Fazenda', text)
+        self.database.fail_table = 'atividades'
+        response = self.client.post(self.pdf_url, json=self.body, headers=self.headers())
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn('secret connection data', response.text)
+        self.assertEqual(response.mimetype, 'application/json')
+        self.database.fail_table = None
+        self.assertEqual(self.client.post(self.pdf_url, json=self.body, headers=self.headers()).status_code, 200)
+
+    def test_pdf_size_limit_is_explicit_and_json_remains_available(self):
+        self.database.tables['historico_desempenho'] = [
+            {'id': index, 'aluno_id': 17, 'atividade_id': 3} for index in range(1, 502)
+        ]
+        response = self.client.post(self.pdf_url, json=self.body, headers=self.headers())
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json['code'], 'PDF_HISTORY_TOO_LARGE')
+        self.assertNotIn('atividades', self.database.reads)
+        self.assertEqual(self.client.post(self.url, json=self.body, headers=self.headers()).status_code, 200)
 
 
 if __name__ == '__main__':
