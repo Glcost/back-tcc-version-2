@@ -131,7 +131,7 @@ def buscar_aluno(aluno_id):
         .execute()
     )
 
-    return resultado.data
+    return resultado.data if resultado is not None else None
 
 
 def buscar_modulo(modulo_id):

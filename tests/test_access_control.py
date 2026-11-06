@@ -69,7 +69,9 @@ class Query:
             columns=[name.strip() for name in self.columns.split(',')]
             rows=[{name:row.get(name) for name in columns} for row in rows]
         else: rows=deepcopy(rows)
-        return SimpleNamespace(data=(rows[0] if rows else None) if self.single_row else rows,count=count)
+        if self.single_row and not rows:
+            return None
+        return SimpleNamespace(data=rows[0] if self.single_row else rows,count=count)
 
 
 class Database:

@@ -525,7 +525,7 @@ def obter_aluno_atual():
             .execute()
         )
         
-        if not aluno_res.data:
+        if not aluno_res or not aluno_res.data:
             return jsonify({"erro": "Estudante não encontrado.", 
                             "code": "NOT_FOUND"}), 404
                     

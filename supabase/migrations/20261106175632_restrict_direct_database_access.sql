@@ -1,4 +1,4 @@
--- Prerequisite: deploy the API using its private server client before applying.
+-- Applied as version 20261106175632 after deploying the private-client API.
 -- The application authenticates its own JWTs; clients never connect to these
 -- tables directly. Tenant ownership is checked by the API before server queries.
 -- This migration changes access only. It does not delete or rewrite user data.
