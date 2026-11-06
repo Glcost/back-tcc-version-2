@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flasgger import Swagger
 from dotenv import load_dotenv
@@ -34,6 +34,15 @@ app.register_blueprint(atividades_bp, url_prefix='/atividades')
 app.register_blueprint(relatorios_bp, url_prefix='/relatorios')
 app.register_blueprint(learning_bp)
 app.register_blueprint(privacidade_bp)
+
+
+@app.after_request
+def proteger_respostas_pessoais(response):
+    if request.path.startswith(('/alunos/', '/professores/', '/relatorios/', '/atividades/')):
+        response.headers['Cache-Control'] = 'no-store, private'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 @app.route('/', methods=['GET'])
 def index():

@@ -502,7 +502,7 @@ def login_aluno():
         }), 200
 
     except Exception as e:
-        return jsonify({"erro": f"Erro interno durante a autenticação do aluno: {str(e)}"}), 500
+        return jsonify({"erro": "Não foi possível autenticar o aluno.", "code": "STUDENT_LOGIN_ERROR"}), 500
 
 
 @alunos_bp.route('/me', methods=['GET'])
@@ -547,7 +547,7 @@ def obter_aluno_atual():
         
 
     except Exception as e:
-        return jsonify({"erro": f"Falha ao carregar perfil atual: {str(e)}"}), 500
+        return jsonify({"erro": "Não foi possível carregar o perfil atual.", "code": "STUDENT_PROFILE_ERROR"}), 500
 
 
 @alunos_bp.route("/missoes-do-dia",methods=["GET"],)
@@ -801,6 +801,7 @@ def obter_perfil_gameplay(aluno_id):
         aluno_res = supabase.table('alunos') \
             .select('id, nome, ano_escolar, email, modo_aprendizagem, hiperfoco, xp_total, professor_id') \
             .eq('id', aluno_id) \
+            .eq('ativo', True) \
             .execute()
             
         if not aluno_res.data:
@@ -860,43 +861,16 @@ def obter_perfil_gameplay(aluno_id):
         return jsonify(payload), 200
         
     except Exception as e:
-        return jsonify({"erro": f"Erro ao resgatar perfil: {str(e)}"}), 500
+        return jsonify({"erro": "Não foi possível carregar o perfil.", "code": "STUDENT_PROFILE_ERROR"}), 500
 
 
 @alunos_bp.route('/desempenho', methods=['POST'])
 @token_obrigatorio
 def salvar_desempenho():
-    try:
-        dados = request.get_json(silent=True)
-        # ... (validações existentes) ...
-
-        payload_insercao = {
-            'aluno_id': int(dados.get('aluno_id')),
-            'atividade_id': int(dados.get('atividade_id')),
-            'modo_utilizado': str(dados.get('modo_utilizado')).strip(),
-            'quantidade_erros': int(dados.get('quantidade_erros')),
-            'tempo_segundos': int(dados.get('tempo_segundos')),
-            'concluido': bool(dados.get('concluido'))
-        }
-
-        # 1. Salva o histórico de telemetria
-        busca = supabase.table('historico_desempenho').insert(payload_insercao).execute()
-
-        # 2. Calcula e incrementa XP no perfil do aluno se concluído com sucesso
-        if dados.get('concluido'):
-            xp_ganho = max(10, 50 - (int(dados.get('quantidade_erros')) * 5))
-            
-            # Busca XP atual do aluno
-            aluno = supabase.table('alunos').select('xp_total').eq('id', dados.get('aluno_id')).execute()
-            xp_atual = aluno.data[0].get('xp_total', 0) if aluno.data else 0
-            
-            # Atualiza total
-            supabase.table('alunos').update({'xp_total': xp_atual + xp_ganho}).eq('id', dados.get('aluno_id')).execute()
-
-        return jsonify({"mensagem": "Telemetria e progresso atualizados com sucesso!"}), 201
-
-    except Exception as e:
-        return jsonify({"erro": f"Erro de persistência: {str(e)}"}), 500
+    # Keep the old URL while using the same token identity, validation and
+    # idempotent transaction as the current progress endpoint.
+    from src.atividades import registrar_progresso
+    return registrar_progresso()
     
     
 

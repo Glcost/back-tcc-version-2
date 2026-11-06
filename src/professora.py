@@ -131,23 +131,20 @@ def verificar_professor_aluno(
     aluno_id,
     professor_id_token,
 ):
+    if not professor_id_token:
+        return False
     resultado = (
         supabase
         .table("alunos")
-        .select("professor_id")
+        .select("id")
         .eq("id", aluno_id)
+        .eq("professor_id", professor_id_token)
         .eq("ativo", True)
         .limit(1)
         .execute()
     )
 
-    if not resultado.data:
-        return False
-
-    return verificar_professor(
-        resultado.data[0].get("professor_id"),
-        professor_id_token,
-    )
+    return bool(resultado.data)
     
     
     
@@ -249,7 +246,7 @@ def cadastro_professor():
         }), 201
         
     except Exception as e:
-        return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
+        return jsonify({"erro": "Não foi possível concluir o cadastro.", "code": "TEACHER_CREATION_ERROR"}), 500
         
 
 
@@ -265,7 +262,7 @@ def login_professor():
         return jsonify({"erro": "E-mail e senha são obrigatórios."}), 400
 
     # 1. Busca a professora pelo e-mail no Supabase
-    busca = supabase.table('professores').select('*').eq('email', str(email).strip().lower()).execute()
+    busca = supabase.table('professores').select('id, nome, email, senha, email_verificado_em').eq('email', str(email).strip().lower()).execute()
 
     if not busca.data:
         return jsonify({"erro": "E-mail ou senha incorretos."}), 401
@@ -352,8 +349,7 @@ def obter_perfil_professor(professor_id):
     except Exception as error:
         return jsonify({
             "erro": (
-                "Erro ao consultar o perfil: "
-                f"{str(error)}"
+                "Não foi possível consultar o perfil."
             ),
             "code": "TEACHER_PROFILE_ERROR",
         }), 500
@@ -557,8 +553,7 @@ def atualizar_perfil_professor(professor_id):
     except Exception as error:
         return jsonify({
             "erro": (
-                "Erro ao atualizar o perfil: "
-                f"{str(error)}"
+                "Não foi possível atualizar o perfil."
             ),
             "code": "TEACHER_PROFILE_UPDATE_ERROR",
         }), 500
@@ -594,7 +589,7 @@ def lista_alunos(professor_id):
         ]), 200
 
     except Exception as e:
-        return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
+        return jsonify({"erro": "Não foi possível listar os alunos.", "code": "STUDENT_LIST_ERROR"}), 500
 
 
 def gerar_pin_aluno():
@@ -833,8 +828,7 @@ def cadastrar_e_avaliar_aluno():
     except Exception as error:
         return jsonify({
             "erro": (
-                "Erro analítico no servidor: "
-                f"{str(error)}"
+                "Não foi possível cadastrar o aluno."
             ),
             "code": "STUDENT_CREATION_ERROR",
         }), 500
@@ -1200,7 +1194,7 @@ def obter_desempenho_aluno(aluno_id):
         # 1. BUSCA NA TABELA CORRETA: historico_desempenho
         # .order('data_hora', desc=True) garante que os relatórios mais novos fiquem no topo da dashboard
         busca = supabase.table('historico_desempenho') \
-            .select('*') \
+            .select('id, aluno_id, atividade_id, modo_utilizado, quantidade_erros, tempo_segundos, concluido, data_hora') \
             .eq('aluno_id', aluno_id) \
             .order('data_hora', desc=True) \
             .execute()
@@ -1209,7 +1203,7 @@ def obter_desempenho_aluno(aluno_id):
         return jsonify(busca.data), 200
 
     except Exception as e:
-        return jsonify({"erro": f"Erro interno no servidor: {str(e)}"}), 500
+        return jsonify({"erro": "Não foi possível carregar o desempenho.", "code": "STUDENT_HISTORY_ERROR"}), 500
 
 
 
@@ -1437,12 +1431,13 @@ def obter_perfil_aluno(aluno_id):
                 "erro": "Acesso não autorizado a este aluno.",
                 "code": "FORBIDDEN",
             }), 403
-        busca = supabase.table('alunos').select('id', 'nome', 'modo_aprendizagem').eq('id', aluno_id).execute()
+        busca = (supabase.table('alunos').select('id, nome, modo_aprendizagem')
+                 .eq('id', aluno_id).eq('professor_id', professor_id).eq('ativo', True).execute())
         if len(busca.data) == 0:
             return jsonify({"erro": "Aluno não encontrado"}), 404
         return jsonify(busca.data[0]), 200
     except Exception as e:
-        return jsonify({"erro": str(e)}), 500
+        return jsonify({"erro": "Não foi possível consultar o aluno.", "code": "STUDENT_PROFILE_ERROR"}), 500
 
 
 # ==========================================================
