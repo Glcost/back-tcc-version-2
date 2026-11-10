@@ -28,6 +28,7 @@ TIPOS_INTERACAO = {
     "OrdenarFrase",
     "Escrita",
     "BancoPalavras",
+    "SepararPorCor",
 }
 
 XP_BASE_POR_ATIVIDADE = 50
@@ -816,7 +817,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
             .table("variacoes_atividades")
             .select(
                 (
-                    "atividade_id, modo_alvo, instrucao_lex, "
+                    "id, atividade_id, modo_alvo, instrucao_lex, "
                     "url_midia_padrao, tipo_interacao, "
                     "resposta_correta"
                 )
@@ -920,6 +921,92 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                     422,
                 )
 
+            configuracao_categorias = None
+            if tipo_interacao.casefold() == "separarporcor":
+                grupos_resultado = (
+                    supabase
+                    .table("variacao_grupos")
+                    .select("id, chave, palavra_en, palavra_pt, ordem")
+                    .eq("variacao_id", variacao["id"])
+                    .order("ordem")
+                    .execute()
+                )
+                grupos_db = grupos_resultado.data or []
+                ids_grupos = [grupo["id"] for grupo in grupos_db]
+
+                if len(grupos_db) < 2:
+                    return resposta_erro(
+                        (
+                            f"A atividade {atividade_id} precisa de pelo "
+                            "menos dois grupos cadastrados."
+                        ),
+                        "INVALID_CATEGORY_CONFIGURATION",
+                        422,
+                    )
+
+                cartoes_resultado = (
+                    supabase
+                    .table("variacao_cartoes")
+                    .select(
+                        "id, grupo_id, palavra_en, palavra_pt, "
+                        "url_imagem, ordem"
+                    )
+                    .in_("grupo_id", ids_grupos)
+                    .order("ordem")
+                    .execute()
+                )
+                cartoes_db = cartoes_resultado.data or []
+                grupos_por_id = {
+                    grupo["id"]: grupo for grupo in grupos_db
+                }
+
+                if (
+                    not cartoes_db
+                    or any(
+                        not any(cartao.get("grupo_id") == grupo["id"]
+                                for cartao in cartoes_db)
+                        for grupo in grupos_db
+                    )
+                    or any(
+                        not str(cartao.get("url_imagem") or "").strip()
+                        for cartao in cartoes_db
+                    )
+                ):
+                    return resposta_erro(
+                        (
+                            f"A atividade {atividade_id} possui grupos "
+                            "sem cartões ou cartões sem imagem."
+                        ),
+                        "INVALID_CATEGORY_CONFIGURATION",
+                        422,
+                    )
+
+                configuracao_categorias = {
+                    "grupos": [
+                        {
+                            "id": str(grupo["chave"]),
+                            "palavra_en": str(grupo["palavra_en"]),
+                            "palavra_pt": str(grupo["palavra_pt"]),
+                            "ordem": grupo["ordem"],
+                        }
+                        for grupo in grupos_db
+                    ],
+                    "cartoes": [
+                        {
+                            "id": cartao["id"],
+                            "palavra_en": str(cartao["palavra_en"]),
+                            "palavra_pt": str(cartao["palavra_pt"]),
+                            "url_imagem": str(cartao["url_imagem"]),
+                            "grupo": str(
+                                grupos_por_id[cartao["grupo_id"]]["chave"]
+                            ),
+                            "ordem": cartao["ordem"],
+                        }
+                        for cartao in cartoes_db
+                        if cartao.get("grupo_id") in grupos_por_id
+                    ],
+                }
+
             midia_personalizada = fotos_por_atividade.get(
                 atividade_id
             )
@@ -928,7 +1015,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                 "url_midia_padrao"
             )
 
-            atividades_adaptadas.append({
+            atividade_adaptada = {
                 "atividade_id": atividade_id,
                 "palavra_chave": str(
                     atividade.get("palavra_chave") or ""
@@ -950,7 +1037,12 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                 "is_personalizada": bool(
                     midia_personalizada
                 ),
-            })
+            }
+
+            if configuracao_categorias:
+                atividade_adaptada.update(configuracao_categorias)
+
+            atividades_adaptadas.append(atividade_adaptada)
 
         return jsonify({
             "aluno": {
