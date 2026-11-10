@@ -14,7 +14,7 @@ relatorios_bp = Blueprint(
 
 # Usa o cliente administrativo quando estiver configurado.
 # A autorização continua sendo validada pelas rotas.
-_db = supabase_admin if supabase_admin else supabase
+_db = supabase_admin
 
 
 # ============================================================
@@ -304,6 +304,10 @@ def _validar_acesso_ao_aluno(aluno_id):
                 403,
             )
 
+        active = (_db.table("alunos").select("id").eq("id", aluno_id)
+                  .eq("ativo", True).limit(1).execute()).data
+        if not active:
+            return _resposta_erro("Aluno indisponível.", "STUDENT_ACCESS_DISABLED", 403)
         return None
 
     if perfil == "professor":

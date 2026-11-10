@@ -52,8 +52,10 @@ def converter_inteiro(
     maximo=None,
 ):
     try:
+        if isinstance(valor, bool) or (isinstance(valor, float) and not valor.is_integer()):
+            raise ValueError()
         numero = int(valor)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ValueError(
             f"O campo '{nome_campo}' deve ser um número inteiro."
         )
@@ -125,11 +127,12 @@ def buscar_aluno(aluno_id):
         .select(("id, nome, modo_aprendizagem, "
                  "xp_total, professor_id"))
         .eq("id", aluno_id)
-        .single()
+        .eq("ativo", True)
+        .maybe_single()
         .execute()
     )
 
-    return resultado.data
+    return resultado.data if resultado is not None else None
 
 
 def buscar_modulo(modulo_id):
@@ -584,8 +587,7 @@ def listar_modulos():
     except Exception as erro:
         return resposta_erro(
             (
-                "Erro ao buscar módulos: "
-                f"{str(erro)}"
+                "Não foi possível buscar os módulos."
             ),
             "MODULE_LIST_ERROR",
             500,
@@ -708,8 +710,7 @@ def alterar_disponibilidade_modulo(
     except Exception as erro:
         return resposta_erro(
             (
-                "Erro ao atualizar o módulo: "
-                f"{str(erro)}"
+                "Não foi possível atualizar o módulo."
             ),
             "MODULE_UPDATE_ERROR",
             500,
@@ -1063,8 +1064,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
     except Exception as erro:
         return resposta_erro(
             (
-                "Erro ao carregar atividades adaptadas: "
-                f"{str(erro)}"
+                "Não foi possível carregar as atividades."
             ),
             "ACTIVITY_LOAD_ERROR",
             500,
@@ -1097,7 +1097,7 @@ def registrar_progresso():
 
         if aluno_id_informado is not None:
             try:
-                aluno_id_informado = int(aluno_id_informado)
+                aluno_id_informado = converter_inteiro(aluno_id_informado, "aluno_id", minimo=1)
             except (TypeError, ValueError):
                 return resposta_erro(
                     "O campo 'aluno_id' é inválido.",

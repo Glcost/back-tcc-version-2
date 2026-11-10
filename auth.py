@@ -23,8 +23,11 @@ def _get_secret_key():
 
 
 def _normalize_user_id(value):
+    if isinstance(value, bool) or isinstance(value, float):
+        return None
     try:
-        return int(value)
+        number = int(value)
+        return number if number > 0 else None
     except (TypeError, ValueError):
         return None
 
@@ -100,7 +103,6 @@ def token_obrigatorio(func):
             return jsonify({
                 "erro": (
                     "Token ausente ou cabeçalho Authorization inválido."
-                    "inválido."
                 ),
                 "code": "INVALID_AUTHORIZATION_HEADER",
             }), 401
@@ -112,6 +114,7 @@ def token_obrigatorio(func):
                 token,
                 _get_secret_key(),
                 algorithms=[JWT_ALGORITHM],
+                options={"require": ["sub", "perfil", "exp", "iat"]},
             )
 
             user_id = _normalize_user_id(

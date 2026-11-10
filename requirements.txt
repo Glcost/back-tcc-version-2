@@ -10,3 +10,4 @@ resend
 google-genai
 pydantic
 requests
+reportlab==4.4.9
