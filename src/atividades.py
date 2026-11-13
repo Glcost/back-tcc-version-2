@@ -29,6 +29,7 @@ TIPOS_INTERACAO = {
     "Escrita",
     "BancoPalavras",
     "SepararPorCor",
+    "MisturaCores",
 }
 
 XP_BASE_POR_ATIVIDADE = 50
