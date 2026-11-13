@@ -819,9 +819,11 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
             .table("variacoes_atividades")
             .select(
                 (
-                    "id, atividade_id, modo_alvo, instrucao_lex, "
-                    "url_midia_padrao, tipo_interacao, "
-                    "resposta_correta", "frase_modelo"
+                    
+                "id, atividade_id, modo_alvo, instrucao_lex, "
+                "url_midia_padrao, tipo_interacao, "
+                "resposta_correta, frase_modelo"
+                
                 )
             )
             .in_("atividade_id", ids_atividades)
