@@ -821,7 +821,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                 (
                     "id, atividade_id, modo_alvo, instrucao_lex, "
                     "url_midia_padrao, tipo_interacao, "
-                    "resposta_correta"
+                    "resposta_correta", "frase_modelo"
                 )
             )
             .in_("atividade_id", ids_atividades)
@@ -1039,6 +1039,9 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
                 "is_personalizada": bool(
                     midia_personalizada
                 ),
+                "frase_modelo": str(
+                     variacao.get("frase_modelo") or ""
+                ).strip(),
             }
 
             if configuracao_categorias:
