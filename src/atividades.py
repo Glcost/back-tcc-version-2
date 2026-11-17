@@ -797,6 +797,7 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
             )
             .eq("modulo_id", modulo_id)
             .order("ordem_sequencia")
+            .order("id")
             .execute()
         )
 
@@ -852,6 +853,39 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
         "MODULE_WITHOUT_ACTIVITIES_FOR_MODE",
         404,
     )
+
+        ids_atividades_disponiveis = [
+            atividade["id"]
+            for atividade in atividades
+        ]
+        historico_resultado = (
+            supabase
+            .table("historico_desempenho")
+            .select("atividade_id")
+            .eq("aluno_id", aluno_id_autenticado)
+            .eq("concluido", True)
+            .in_("atividade_id", ids_atividades_disponiveis)
+            .execute()
+        )
+        atividades_concluidas = {
+            int(registro["atividade_id"])
+            for registro in (historico_resultado.data or [])
+            if registro.get("atividade_id") is not None
+        }
+        proxima_atividade = next(
+            (
+                atividade
+                for atividade in atividades
+                if int(atividade["id"]) not in atividades_concluidas
+            ),
+            None,
+        )
+        modulo_concluido = proxima_atividade is None
+        proxima_etapa = int(
+            proxima_atividade["ordem_sequencia"]
+            if proxima_atividade
+            else atividades[0]["ordem_sequencia"]
+        )
 
         itens_modulo = buscar_itens_modulo(
             modulo_id
@@ -1062,6 +1096,10 @@ def carregar_atividades_modulo(modulo_id, aluno_id):
             "modulo": {
                 "id": modulo["id"],
                 "nome": modulo["nome"],
+            },
+            "progresso": {
+                "proxima_etapa": proxima_etapa,
+                "concluido": modulo_concluido,
             },
             "atividades": atividades_adaptadas,
             "itens": itens_normalizados,
